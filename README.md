@@ -92,7 +92,7 @@ The wizard asks you seven things:
 | **1. Private keys** | Paste one per line, hidden as you type. Blank line to finish. Each key is confirmed back to you by its wallet address, so you can check you pasted the right one. |
 | **2. Chain** | Ethereum, Base, or Robinhood. |
 | **3. Quantity** | How many NFTs **per wallet**. |
-| **4. NFT link** | An OpenSea collection link, an item link, a slug, or the raw `0x` contract address. |
+| **4. NFT link** | An OpenSea collection link, an item link, a slug, or the raw `0x` contract address. A contract address or item link always works with no API key; a collection slug needs a lookup that usually works unauthenticated. |
 | **5. RPC** | Paste a full URL, or just your Alchemy key and it expands automatically. Blank uses `.env`, or public nodes. |
 | **6. Gas** | Ceiling and tip. The live base fee is shown right above the prompt. |
 | **7. Timing** | Wait for the stage to open, or fire now if it's already live. |

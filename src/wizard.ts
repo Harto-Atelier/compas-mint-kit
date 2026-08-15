@@ -345,18 +345,14 @@ async function promptTarget(
       return { contract: normalized.address, label: short(normalized.address), chainKey: activeChain };
     }
 
-    // Slug → address needs OpenSea's public REST API key. Only used to look up
-    // an address; the mint itself never touches OpenSea.
+    // Slug → address is a plain OpenSea REST lookup, which often answers without
+    // a key. Always try; a key only makes it reliable. The mint itself never
+    // touches OpenSea either way.
     const apiKey = (process.env.OPENSEA_API_KEY || "").trim();
-    if (!apiKey) {
-      console.log(chalk.red("  ✗ Turning a slug into an address needs OPENSEA_API_KEY in .env."));
-      console.log(chalk.gray("    Paste the NFT contract address (0x…) instead — that always works."));
-      continue;
-    }
 
     try {
-      console.log(chalk.gray(`  Resolving slug "${parsed.value}"...`));
-      const info = await resolveSlug(parsed.value, apiKey, activeChain);
+      console.log(chalk.gray(`  Resolving slug "${parsed.value}"${apiKey ? "" : " (no API key — may be refused)"}...`));
+      const info = await resolveSlug(parsed.value, apiKey || undefined, activeChain);
       const resolved = normalizeAddress(info.contractAddress);
       if (!resolved) {
         console.log(chalk.red(`  ✗ Unusable address returned: ${info.contractAddress}`));
@@ -372,7 +368,12 @@ async function promptTarget(
       return { contract: resolved.address, label: info.name || parsed.value, chainKey: activeChain };
     } catch (err: any) {
       console.log(chalk.red(`  ✗ ${err.message}`));
-      console.log(chalk.gray("    Try the contract address instead."));
+      console.log(
+        chalk.gray("    Paste the contract address (0x…) instead — that always works, no key needed.")
+      );
+      console.log(
+        chalk.gray("    Find it on the collection page under Details, or click any item: the address is in that URL.")
+      );
     }
   }
 }
