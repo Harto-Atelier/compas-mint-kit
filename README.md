@@ -147,29 +147,6 @@ code changes needed.
 
 ---
 
-## Troubleshooting
-
-**"No SeaDrop public drop readable"**
-The contract isn't a SeaDrop collection, or it keeps its drop config on the token
-contract instead of the shared SeaDrop singleton. This tool only handles the
-SeaDrop singleton at `0x00005EA00Ac477B1030CE78506496e8C2dE24bf5`.
-
-**"Turning a slug into an address needs OPENSEA_API_KEY"**
-Paste the `0x` contract address instead — that always works without a key. Or get
-a free key from [OpenSea's docs](https://docs.opensea.io/reference/api-keys).
-
-**"Every wallet is underfunded"**
-Either add ETH, or lower your max fee to the number the tool suggests.
-
-**Transaction reverted with `NotActive`**
-It landed before the stage opened. Use "Wait for the stage" rather than "Fire now".
-
-**Only public nodes listed**
-No private RPC configured for that chain. Add `RPC_URL_<CHAIN>` to `.env` or paste
-one at the prompt.
-
----
-
 ## Security
 
 - Private keys are pasted at run time, kept in memory, and **never written to
