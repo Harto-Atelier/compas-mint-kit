@@ -23,21 +23,43 @@ Multi-wallet: paste as many keys as you like and they all fire in parallel.
 
 ---
 
-## Step 1 — Get the code
+## Step 1 — Install
+
+Run these **one line at a time**, pressing Enter after each:
 
 ```bash
 git clone https://github.com/morsyxbt/nft-public-mint.git
 cd nft-public-mint
-```
-
-## Step 2 — Install and build
-
-```bash
 npm install
 npm run build
 ```
 
-## Step 3 — Configure (optional but recommended)
+Before running `npm install`, check your prompt ends in `nft-public-mint` — if the
+`cd` didn't take, everything after it fails.
+
+Then confirm the build worked:
+
+```bash
+npm start -- --help
+```
+
+<details>
+<summary>Install errors</summary>
+
+**`Set-Location : A positional parameter cannot be found`** (Windows PowerShell)
+Two commands got pasted onto one line — you'll see something like
+`cd nft-public-mintnpm install`. Run each line separately.
+
+**`Could not read package.json` / `Missing script: build`**
+You're in the wrong folder. Run `cd nft-public-mint` first.
+
+**`npm` or `git` is not recognised**
+Install [Node.js 18+](https://nodejs.org) and [Git](https://git-scm.com/downloads),
+then reopen your terminal.
+
+</details>
+
+## Step 2 — Configure (optional but recommended)
 
 ```bash
 cp .env.example .env
@@ -57,7 +79,7 @@ nodes.
 > **Never put private keys in `.env`.** You paste them into the CLI at run time.
 > They're held in memory for that run only and never written to disk.
 
-## Step 4 — Run it
+## Step 3 — Run it
 
 ```bash
 npm start
@@ -77,7 +99,7 @@ The wizard asks you seven things:
 
 Then it shows a summary and asks `Fire?`. **Nothing is sent until you type `y`.**
 
-## Step 5 — Set it and walk away
+## Step 4 — Set it and walk away
 
 If the drop opens later, choose **"Wait for the stage"**. It pre-signs everything,
 holds, and fires at the exact start time — no supervision needed. The `Fire?`
