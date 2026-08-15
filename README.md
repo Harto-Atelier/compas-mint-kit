@@ -3,7 +3,7 @@
 A command-line tool for sniping **public** NFT mints on OpenSea's SeaDrop, across
 Ethereum, Base and Robinhood Chain.
 
-It builds the mint transaction from **on-chain data only** — price, fee recipient
+It builds the mint transaction from **on-chain data only** - price, fee recipient
 and per-wallet limit all come straight from the SeaDrop contract. That means:
 
 - **No OpenSea account, login, or access token.**
