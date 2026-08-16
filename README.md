@@ -1,3 +1,10 @@
+> **Harto Atelier fork — `compas-mint-kit`**
+> Fork of [morsyxbt/nft-public-mint](https://github.com/morsyxbt/nft-public-mint). Curated for Compas holders.
+> Original credit: [@morsyxbt](https://github.com/morsyxbt).
+> See [`COMPAS.md`](./COMPAS.md) for the Compa-holder utility notes.
+
+---
+
 # NFT Public Mint Sniper
 
 A command-line tool for sniping **public** NFT mints on OpenSea's SeaDrop, across
