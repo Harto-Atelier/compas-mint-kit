@@ -9,9 +9,11 @@ private key. This app is the browser-side planner for the root
 - Discover a collection from an OpenSea slug/link, item URL, or raw `0x`
   contract address.
 - Review stage cards for public, team, GTD, and FCFS-style mint phases.
-- Price wallet waves with quantity, wallet count, gas limit, max-fee, and
-  optional sweep-destination labels. The webapp never moves or sweeps funds.
-- Produce a preview schedule/run config that can be carried to the local CLI.
+- Price wallet waves with quantity, wallet count, gas limit, max-fee, optional
+  sweep-destination labels, target mainnet chain, RPC readiness status, max
+  spend cap, and local CLI concurrency. The webapp never moves or sweeps funds.
+- Produce a preview schedule/run config and a copyable local dry-run command for
+  the root CLI.
 - Support the current kit chains: **Ethereum**, **Base**, and **Robinhood Chain**.
 
 ## What it deliberately does not do
@@ -40,10 +42,12 @@ Open <http://localhost:3000>.
 The web console is the planning lane; the CLI is the execution lane.
 
 1. Use the console to discover the collection and review supported stages.
-2. Set quantities, wallet count, gas limit, max fee, and optional sweep destination label.
+2. Set quantities, wallet count, gas limit, max fee, optional sweep destination label,
+   target chain (ETH mainnet or Robinhood Chain), RPC status, max spend cap, and
+   local CLI concurrency.
 3. Save/export the preview schedule as the run config handoff.
-4. Move that config to the root CLI on the same machine that owns the hot-wallet
-   keys.
+4. Copy the generated local command, then move that config to the root CLI on the
+   same machine that owns the hot-wallet keys.
 5. Dry-run locally first: verify RPC chain ID, balances, gas ceiling, calldata,
    stage timing, and per-wallet limits.
 6. Broadcast only from the local CLI after explicit operator confirmation.
@@ -67,6 +71,10 @@ The run config should contain only planning data:
 
 It must not contain private keys, mnemonic phrases, wallet files, cookies, or RPC
 provider secrets.
+
+Hosted/Vercel boundary: this planner is designed to run without secret env vars.
+Do not add private keys, signer material, RPC URLs/API keys, or wallet/session
+data to Vercel env, and never expose them through `NEXT_PUBLIC_*`.
 
 ## APIs
 

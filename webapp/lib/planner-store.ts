@@ -38,6 +38,8 @@ export const DEFAULT_STAGE_QUANTITIES: Record<StageKind, number> = {
 };
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const PRIVATE_KEY_LIKE_PART_RE = /^(?:0x)?[0-9a-fA-F]{64}$/;
+const RAW_TRANSACTION_LIKE_PART_RE = /^0x[0-9a-fA-F]{130,}$/;
 
 export const SEED_PLANNER_WALLETS: PlannerWalletRecord[] = [
   {
@@ -105,7 +107,8 @@ export function parseBulkWalletImport(raw: string, fallbackChain: PlannerWalletC
         .filter(Boolean);
       const addressIndex = parts.findIndex((part) => isPlannerAddress(part));
       const address = addressIndex >= 0 ? parts[addressIndex] : "";
-      const name = addressIndex > 0 ? parts.slice(0, addressIndex).join(" ") : `Imported wallet ${index + 1}`;
+      const publicNameParts = addressIndex > 0 ? parts.slice(0, addressIndex).filter((part) => !isSecretLikeImportPart(part)) : [];
+      const name = publicNameParts.length > 0 ? publicNameParts.join(" ") : `Imported wallet ${index + 1}`;
 
       return {
         name: name || `Imported wallet ${index + 1}`,
@@ -163,4 +166,9 @@ function randomHex(bytes: number) {
 function fallbackDemoAddress(count: number) {
   const suffix = count.toString(16).padStart(40, "0").slice(-40);
   return `0x${suffix}`;
+}
+
+function isSecretLikeImportPart(value: string) {
+  const trimmed = value.trim();
+  return PRIVATE_KEY_LIKE_PART_RE.test(trimmed) || RAW_TRANSACTION_LIKE_PART_RE.test(trimmed);
 }

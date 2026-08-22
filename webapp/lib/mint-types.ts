@@ -1,6 +1,15 @@
 export type StageKind = "team" | "gtd" | "fcfs" | "public";
 export type StageSource = "onchain-seadrop" | "opensea-signed-preview" | "mock-preview";
 export type StageStatus = "ended" | "live" | "upcoming" | "unknown";
+export type FinalProductChainKey = "ethereum" | "robinhood";
+export type RpcReadinessStatus = "unchecked" | "ready" | "blocked";
+
+export interface FinalProductControls {
+  targetChainKey: FinalProductChainKey;
+  rpcStatus: RpcReadinessStatus;
+  maxSpendEth: number;
+  concurrency: number;
+}
 
 export interface ChainOption {
   key: string;
@@ -66,6 +75,7 @@ export interface ScheduleRequest {
   maxFeeGwei: number;
   gasLimit: number;
   drainAddress?: string;
+  finalProduct: FinalProductControls;
 }
 
 export interface ScheduleResponse {
@@ -88,6 +98,10 @@ export interface ScheduleResponse {
     grandTotalEth: string;
   };
   drainAddress?: string;
+  finalProduct: FinalProductControls & {
+    walletAliasCount: number;
+    localCliCommand: string;
+  };
   warnings: string[];
 }
 

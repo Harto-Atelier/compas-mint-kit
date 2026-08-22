@@ -1,4 +1,5 @@
-import type { CollectionCard, StageKind, StageSource, StageStatus } from "./mint-types";
+import { CHAINS } from "./chains";
+import type { CollectionCard, FinalProductChainKey, RpcReadinessStatus, StageKind, StageSource, StageStatus } from "./mint-types";
 
 export const RUN_CONFIG_SCHEMA_ID = "https://compas.local/schemas/mint-run-config.v1.schema.json";
 export const RUN_CONFIG_SCHEMA_VERSION = "compas.mint-run-config.v1";
@@ -6,6 +7,8 @@ export const RUN_CONFIG_SCHEMA_VERSION = "compas.mint-run-config.v1";
 const STAGE_IDS: StageKind[] = ["team", "gtd", "fcfs", "public"];
 const STAGE_SOURCES: StageSource[] = ["onchain-seadrop", "opensea-signed-preview", "mock-preview"];
 const STAGE_STATUSES: StageStatus[] = ["ended", "live", "upcoming", "unknown"];
+const FINAL_PRODUCT_CHAIN_KEYS: FinalProductChainKey[] = ["ethereum", "robinhood"];
+const RPC_READINESS_STATUSES: RpcReadinessStatus[] = ["unchecked", "ready", "blocked"];
 const FORBIDDEN_KEYS = new Set([
   "privateKey",
   "privateKeys",
@@ -18,13 +21,25 @@ const FORBIDDEN_KEYS = new Set([
   "rawTx",
   "rawTransaction",
   "rawTransactions",
+  "rpcUrl",
+  "rpcUrls",
+  "providerUrl",
+  "providerUrls",
+  "apiKey",
+  "accessToken",
+  "bearerToken",
+  "password",
+  "cookie",
+  "cookies",
   "transactionData",
   "calldata",
   "calldataPreview",
   "signature",
   "signatures",
+  "apiKeys",
 ].map(normalizeForbiddenKey));
 const PRIVATE_KEY_LIKE_VALUE_RE = /(?:^|[\s,:'"=])(?:0x)?[a-fA-F0-9]{64}(?=$|[\s,:'"])/;
+const RAW_TRANSACTION_LIKE_VALUE_RE = /(?:^|[\s,:'"=])0x(?:02|01|f8|f9)[a-fA-F0-9]{80,}(?=$|[\s,:'"])/;
 const MAX_FEE_GWEI = 10_000;
 const MAX_WALLET_COUNT = 20;
 
@@ -34,7 +49,7 @@ export const RUN_CONFIG_JSON_SCHEMA = {
   title: "Compas Mint Kit RunConfig",
   type: "object",
   additionalProperties: false,
-  required: ["schemaVersion", "createdAt", "safety", "collection", "chain", "wallets", "gas", "stages", "timing", "warnings"],
+  required: ["schemaVersion", "createdAt", "safety", "collection", "chain", "wallets", "gas", "execution", "stages", "timing", "warnings"],
   properties: {
     schemaVersion: { const: RUN_CONFIG_SCHEMA_VERSION },
     createdAt: { type: "string", format: "date-time" },
@@ -89,6 +104,31 @@ export const RUN_CONFIG_JSON_SCHEMA = {
       properties: {
         maxFeeGwei: { type: "number", minimum: 0, maximum: MAX_FEE_GWEI },
         gasLimit: { type: "integer", minimum: 21000, maximum: 2000000 },
+      },
+    },
+    execution: {
+      type: "object",
+      additionalProperties: false,
+      required: ["chain", "rpcStatus", "walletAliasCount", "maxSpendEth", "concurrency", "localCliCommand", "webPlansCliExecutesLocally"],
+      properties: {
+        chain: {
+          type: "object",
+          additionalProperties: false,
+          required: ["key", "name", "chainId", "nativeSymbol", "explorer"],
+          properties: {
+            key: { enum: FINAL_PRODUCT_CHAIN_KEYS },
+            name: { type: "string", minLength: 1 },
+            chainId: { type: "integer", minimum: 1 },
+            nativeSymbol: { type: "string", minLength: 1 },
+            explorer: { type: "string" },
+          },
+        },
+        rpcStatus: { enum: RPC_READINESS_STATUSES },
+        walletAliasCount: { type: "integer", minimum: 1, maximum: MAX_WALLET_COUNT },
+        maxSpendEth: { type: "number", exclusiveMinimum: 0 },
+        concurrency: { type: "integer", minimum: 1, maximum: MAX_WALLET_COUNT },
+        localCliCommand: { type: "string", minLength: 1 },
+        webPlansCliExecutesLocally: { const: true },
       },
     },
     drain: {
@@ -164,6 +204,10 @@ export interface RunConfigExportRequest {
   maxFeeGwei: number;
   gasLimit: number;
   drainAddress?: string;
+  targetChainKey: FinalProductChainKey;
+  rpcStatus: RpcReadinessStatus;
+  maxSpendEth: number;
+  concurrency: number;
 }
 
 export interface MintRunConfig {
@@ -196,6 +240,21 @@ export interface MintRunConfig {
   gas: {
     maxFeeGwei: number;
     gasLimit: number;
+  };
+  execution: {
+    chain: {
+      key: FinalProductChainKey;
+      name: string;
+      chainId: number;
+      nativeSymbol: string;
+      explorer: string;
+    };
+    rpcStatus: RpcReadinessStatus;
+    walletAliasCount: number;
+    maxSpendEth: number;
+    concurrency: number;
+    localCliCommand: string;
+    webPlansCliExecutesLocally: true;
   };
   drain: {
     address: string | null;
@@ -266,7 +325,19 @@ export function buildRunConfigExport(body: unknown, now = new Date()): RunConfig
 
   const drainAddress = normalizeOptionalAddress(request.drainAddress, "sweep destination");
   const fireAt = selectedStages.map((stage) => stage.timing.fireAt).filter((value): value is string => Boolean(value)).sort()[0] ?? null;
-  const warnings = buildRunConfigWarnings(request.stages, selectedStages);
+  const executionChain = resolveFinalProductChain(request.targetChainKey);
+  const maxSpendEth = boundedNumber(request.maxSpendEth, 0.000001, 10_000, "max spend cap");
+  const concurrency = clampInteger(request.concurrency, 1, request.walletCount, "concurrency");
+  const estimatedGrandTotalEth = estimateGrandTotalEth(selectedStages, request.walletCount, request.maxFeeGwei, request.gasLimit);
+  if (maxSpendEth < estimatedGrandTotalEth) {
+    throw new Error(`Max spend cap ${maxSpendEth} ETH is below estimated total ${formatEth(estimatedGrandTotalEth)} ETH.`);
+  }
+  const filename = buildRunConfigFilename(request.collection.slug || request.collection.name, executionChain.key);
+  const warnings = buildRunConfigWarnings(request.stages, selectedStages, {
+    collectionChainKey: request.collection.chain.key,
+    targetChainKey: executionChain.key,
+    rpcStatus: request.rpcStatus,
+  });
   const config: MintRunConfig = {
     schemaVersion: RUN_CONFIG_SCHEMA_VERSION,
     createdAt,
@@ -284,11 +355,11 @@ export function buildRunConfigExport(body: unknown, now = new Date()): RunConfig
       explorerUrl: nonEmptyString(request.collection.explorerUrl, "explorer URL"),
     },
     chain: {
-      key: nonEmptyString(request.collection.chain.key, "chain key"),
-      name: nonEmptyString(request.collection.chain.name, "chain name"),
-      chainId: clampInteger(request.collection.chain.chainId, 1, 10_000_000, "chain id"),
-      nativeSymbol: nonEmptyString(request.collection.chain.nativeSymbol, "native symbol"),
-      explorer: nonEmptyString(request.collection.chain.explorer, "chain explorer"),
+      key: executionChain.key,
+      name: executionChain.name,
+      chainId: executionChain.chainId,
+      nativeSymbol: executionChain.nativeSymbol,
+      explorer: executionChain.explorer,
     },
     wallets: {
       count: request.walletCount,
@@ -297,6 +368,21 @@ export function buildRunConfigExport(body: unknown, now = new Date()): RunConfig
     gas: {
       maxFeeGwei: boundedNumber(request.maxFeeGwei, 0, MAX_FEE_GWEI, "max fee gwei"),
       gasLimit: clampInteger(request.gasLimit, 21_000, 2_000_000, "gas limit"),
+    },
+    execution: {
+      chain: {
+        key: executionChain.key,
+        name: executionChain.name,
+        chainId: executionChain.chainId,
+        nativeSymbol: executionChain.nativeSymbol,
+        explorer: executionChain.explorer,
+      },
+      rpcStatus: request.rpcStatus,
+      walletAliasCount: request.walletCount,
+      maxSpendEth,
+      concurrency,
+      localCliCommand: buildLocalCliCommand(filename),
+      webPlansCliExecutesLocally: true,
     },
     drain: { address: drainAddress },
     stages: selectedStages,
@@ -307,7 +393,7 @@ export function buildRunConfigExport(body: unknown, now = new Date()): RunConfig
   validateRunConfig(config);
   return {
     ok: true,
-    filename: `${slugify(config.collection.slug || config.collection.name)}-${config.chain.key}-run-config.json`,
+    filename,
     config,
     schema: RUN_CONFIG_JSON_SCHEMA,
   };
@@ -318,12 +404,28 @@ export function createWalletAliases(count: number, prefix = "wallet"): string[] 
   return Array.from({ length: walletCount }, (_, index) => `${prefix}-${String(index + 1).padStart(2, "0")}`);
 }
 
+export function buildRunConfigFilename(collectionNameOrSlug: string, chainKey: FinalProductChainKey): string {
+  return `${slugify(collectionNameOrSlug)}-${chainKey}-run-config.json`;
+}
+
+export function buildLocalCliCommand(filename: string): string {
+  return `npm run dev -- --config ./${filename} --dry-run`;
+}
+
 export function validateRunConfig(config: MintRunConfig): void {
   assertNoForbiddenKeys(config);
   if (config.safety.canBroadcast || config.safety.includesPrivateKeys || config.safety.includesSignedTransactions || config.safety.includesRawTransactions) {
     throw new Error("RunConfig safety flags must remain no-broadcast and no-secret.");
   }
   if (config.wallets.aliases.length !== config.wallets.count) throw new Error("Wallet aliases must match wallet count.");
+  if (!FINAL_PRODUCT_CHAIN_KEYS.includes(config.execution.chain.key)) throw new Error(`Invalid execution chain: ${config.execution.chain.key}`);
+  if (!RPC_READINESS_STATUSES.includes(config.execution.rpcStatus)) throw new Error(`Invalid RPC status: ${config.execution.rpcStatus}`);
+  if (config.execution.walletAliasCount !== config.wallets.count) throw new Error("Execution wallet alias count must match wallet count.");
+  if (config.execution.concurrency < 1 || config.execution.concurrency > config.wallets.count) throw new Error("Execution concurrency must fit wallet alias count.");
+  if (!Number.isFinite(config.execution.maxSpendEth) || config.execution.maxSpendEth <= 0) throw new Error("Max spend cap must be positive.");
+  if (!config.execution.webPlansCliExecutesLocally || !config.execution.localCliCommand.includes("--dry-run")) {
+    throw new Error("Execution handoff must remain local CLI dry-run only.");
+  }
   for (const alias of config.wallets.aliases) {
     if (!/^[a-zA-Z0-9._:-]+$/.test(alias)) throw new Error(`Invalid wallet alias: ${alias}`);
   }
@@ -344,6 +446,8 @@ function parseRunConfigExportRequest(body: unknown): RunConfigExportRequest {
   const walletAliases = object.walletAliases === undefined ? undefined : expectArray(object.walletAliases, "wallet aliases").map((alias) => validateAlias(String(alias)));
   if (walletAliases && walletAliases.length !== walletCount) throw new Error("Wallet aliases must match wallet count.");
 
+  const finalProduct = object.finalProduct === undefined ? object : expectObject(object.finalProduct, "final product controls");
+
   return {
     collection,
     stages,
@@ -353,6 +457,10 @@ function parseRunConfigExportRequest(body: unknown): RunConfigExportRequest {
     maxFeeGwei: boundedNumber(object.maxFeeGwei, 0, MAX_FEE_GWEI, "max fee gwei"),
     gasLimit: clampInteger(object.gasLimit, 21_000, 2_000_000, "gas limit"),
     drainAddress: typeof object.drainAddress === "string" ? object.drainAddress : undefined,
+    targetChainKey: expectEnum(finalProduct.targetChainKey, FINAL_PRODUCT_CHAIN_KEYS, "target chain"),
+    rpcStatus: expectEnum(finalProduct.rpcStatus, RPC_READINESS_STATUSES, "RPC status"),
+    maxSpendEth: boundedNumber(finalProduct.maxSpendEth, 0.000001, 10_000, "max spend cap"),
+    concurrency: clampInteger(finalProduct.concurrency, 1, walletCount, "concurrency"),
   };
 }
 
@@ -385,9 +493,15 @@ function parseQuantityInput(value: unknown): { stageId: StageKind; quantity: num
 
 function buildRunConfigWarnings(
   inputs: RunConfigStageInput[],
-  selectedStages: MintRunConfig["stages"]
+  selectedStages: MintRunConfig["stages"],
+  finalProduct: { collectionChainKey: string; targetChainKey: FinalProductChainKey; rpcStatus: RpcReadinessStatus }
 ): string[] {
   const warnings = ["RunConfig export only: no private keys, signatures, raw transactions, calldata, signing, or broadcast are included."];
+  if (finalProduct.collectionChainKey !== finalProduct.targetChainKey) {
+    warnings.push(`Target chain ${finalProduct.targetChainKey} differs from discovered collection chain ${finalProduct.collectionChainKey}; verify locally before execution.`);
+  }
+  if (finalProduct.rpcStatus === "unchecked") warnings.push("RPC status is marked unchecked; the local CLI dry-run must verify chain ID and connectivity.");
+  if (finalProduct.rpcStatus === "blocked") warnings.push("RPC status is marked blocked; do not execute locally until RPC is healthy.");
   for (const stage of selectedStages) {
     const input = inputs.find((candidate) => candidate.id === stage.stageId);
     if (input?.maxPerWallet !== null && input?.maxPerWallet !== undefined && stage.quantityPerWallet > input.maxPerWallet) {
@@ -405,6 +519,9 @@ function assertNoForbiddenKeys(value: unknown, path = "$", seen = new WeakSet<ob
   if (typeof value === "string") {
     if (PRIVATE_KEY_LIKE_VALUE_RE.test(value)) {
       throw new Error(`Forbidden private-key-shaped value at ${path}; exports cannot include secrets.`);
+    }
+    if (RAW_TRANSACTION_LIKE_VALUE_RE.test(value)) {
+      throw new Error(`Forbidden raw-transaction-shaped value at ${path}; exports cannot include signed transactions.`);
     }
     return;
   }
@@ -480,6 +597,27 @@ function normalizeOptionalIso(value: unknown, label: string): string | null {
   if (value === undefined || value === null || value === "") return null;
   if (typeof value !== "string" || Number.isNaN(Date.parse(value))) throw new Error(`Invalid ${label}.`);
   return new Date(value).toISOString();
+}
+
+function resolveFinalProductChain(key: FinalProductChainKey) {
+  const chain = CHAINS.find((candidate) => candidate.key === key);
+  if (!chain || !FINAL_PRODUCT_CHAIN_KEYS.includes(chain.key as FinalProductChainKey)) throw new Error(`Invalid target chain: ${key}.`);
+  return { ...chain, key: chain.key as FinalProductChainKey };
+}
+
+function estimateGrandTotalEth(
+  stages: MintRunConfig["stages"],
+  walletCount: number,
+  maxFeeGwei: number,
+  gasLimit: number,
+): number {
+  const mintEth = stages.reduce((sum, stage) => sum + Number(stage.priceEth || 0) * stage.quantityPerWallet * walletCount, 0);
+  const gasCeilingEth = stages.length * walletCount * gasLimit * maxFeeGwei * 1e-9;
+  return mintEth + gasCeilingEth;
+}
+
+function formatEth(value: number): string {
+  return value.toLocaleString("en-US", { maximumFractionDigits: 6, minimumFractionDigits: 4, useGrouping: false });
 }
 
 function normalizeEthString(value: unknown, label: string): string {

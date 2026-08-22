@@ -12,7 +12,7 @@ import type {
   ScheduleResponse,
   StageKind,
 } from "@/lib/mint-types";
-import { createWalletAliases, type RunConfigExportError, type RunConfigExportResponse, type RunConfigStageInput } from "@/lib/run-config";
+import { createWalletAliases, buildLocalCliCommand, buildRunConfigFilename, type RunConfigExportError, type RunConfigExportResponse, type RunConfigStageInput } from "@/lib/run-config";
 
 const DEFAULT_QUERY = "base/collection/compas";
 const MAX_RECOMMENDED_WALLETS = 20;
@@ -37,6 +37,15 @@ const COLLECTION_SOURCE_LABELS: Record<MintDiscoveryResponse["collection"]["sour
 };
 
 const LOCAL_COMMAND_PLACEHOLDER = "downloaded-run-config.json";
+const FINAL_PRODUCT_CHAIN_OPTIONS: { key: FinalProductControls["targetChainKey"]; label: string; detail: string }[] = [
+  { key: "ethereum", label: "ETH Mainnet", detail: "Chain ID 1" },
+  { key: "robinhood", label: "Robinhood Chain", detail: "Chain ID 4663" },
+];
+const RPC_STATUS_OPTIONS: { key: FinalProductControls["rpcStatus"]; label: string }[] = [
+  { key: "unchecked", label: "Needs local CLI RPC check" },
+  { key: "ready", label: "Operator confirmed RPC ready" },
+  { key: "blocked", label: "RPC blocked / do not execute" },
+];
 
 const FIELD_CLASS =
   "h-12 rounded-2xl border border-violet-100 bg-white/90 px-4 text-slate-950 outline-none shadow-sm transition placeholder:text-slate-400 focus:border-violet-300 focus:ring-4 focus:ring-violet-100";
@@ -82,6 +91,10 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
   const [exportLoading, setExportLoading] = useState<"copy" | "download" | null>(null);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
   const [lastExportFilename, setLastExportFilename] = useState<string | null>(null);
+  const [targetChainKey, setTargetChainKey] = useState<FinalProductControls["targetChainKey"]>("ethereum");
+  const [rpcStatus, setRpcStatus] = useState<FinalProductControls["rpcStatus"]>("unchecked");
+  const [maxSpendEth, setMaxSpendEth] = useState(0.25);
+  const [concurrency, setConcurrency] = useState(2);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -95,11 +108,6 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
   const selectedTransactionCount = selectedStageCount * walletCount;
   const gasInputReady = Number.isFinite(maxFeeGwei) && maxFeeGwei > 0 && Number.isFinite(gasLimit) && gasLimit >= 21_000;
   const walletWarning = walletCount > MAX_RECOMMENDED_WALLETS;
-  const scheduleBlocked = selectedStageCount === 0 || walletWarning || !gasInputReady;
-  const readinessItems = useMemo(
-    () => buildReadinessItems(activeStages, selectedStages, walletCount, maxFeeGwei, gasLimit, walletWarning, gasInputReady),
-    [activeStages, selectedStages, walletCount, maxFeeGwei, gasLimit, walletWarning, gasInputReady],
-  );
   const totals = useMemo(() => calculateTotals(activeStages, quantities, walletCount, maxFeeGwei, gasLimit), [
     activeStages,
     quantities,
@@ -107,8 +115,34 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
     maxFeeGwei,
     gasLimit,
   ]);
-  const localCommand = useMemo(() => buildLocalCommand(lastExportFilename), [lastExportFilename]);
-  const finalProductControls = useMemo(() => buildFinalProductControls(chain, walletCount, totals), [chain, walletCount, totals]);
+  const maxSpendReady = Number.isFinite(maxSpendEth) && maxSpendEth >= totals.grandTotalValue;
+  const concurrencyReady = Number.isFinite(concurrency) && concurrency >= 1 && concurrency <= walletCount;
+  const finalControlsBlocked = !maxSpendReady || !concurrencyReady || rpcStatus === "blocked";
+  const scheduleBlocked = selectedStageCount === 0 || walletWarning || !gasInputReady || finalControlsBlocked;
+  const readinessItems = useMemo(
+    () => buildReadinessItems(activeStages, selectedStages, walletCount, maxFeeGwei, gasLimit, walletWarning, gasInputReady, {
+      targetChainKey,
+      rpcStatus,
+      maxSpendEth,
+      concurrency,
+      maxSpendReady,
+      concurrencyReady,
+      grandTotalEth: totals.grandTotalEth,
+    }),
+    [activeStages, selectedStages, walletCount, maxFeeGwei, gasLimit, walletWarning, gasInputReady, targetChainKey, rpcStatus, maxSpendEth, concurrency, maxSpendReady, concurrencyReady, totals.grandTotalEth],
+  );
+  const plannedFilename = useMemo(
+    () => (discovery ? buildRunConfigFilename(discovery.collection.slug || discovery.collection.name, targetChainKey) : LOCAL_COMMAND_PLACEHOLDER),
+    [discovery, targetChainKey],
+  );
+  const localCommand = useMemo(
+    () => buildLocalCliCommand(lastExportFilename === plannedFilename ? lastExportFilename : plannedFilename),
+    [lastExportFilename, plannedFilename],
+  );
+  const finalProductControls = useMemo(
+    () => ({ targetChainKey, rpcStatus, maxSpendEth, concurrency }),
+    [targetChainKey, rpcStatus, maxSpendEth, concurrency],
+  );
 
   async function handleDiscover(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -268,6 +302,9 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
                 gasLimit={gasLimit}
                 localCommand={localCommand}
                 maxFeeGwei={maxFeeGwei}
+                finalProductControls={finalProductControls}
+                maxSpendReady={maxSpendReady}
+                concurrencyReady={concurrencyReady}
                 readinessItems={readinessItems}
                 scheduleBlocked={scheduleBlocked}
                 selectedStageCount={selectedStageCount}
@@ -282,6 +319,10 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
                 onGasLimit={setGasLimit}
                 onLocalCommandCopy={handleCopyLocalCommand}
                 onMaxFee={setMaxFeeGwei}
+                onTargetChain={setTargetChainKey}
+                onRpcStatus={setRpcStatus}
+                onMaxSpend={setMaxSpendEth}
+                onConcurrency={setConcurrency}
                 onSchedule={handleSchedule}
                 onWalletCount={setWalletCount}
                 scheduleLoading={scheduleLoading}
@@ -487,6 +528,9 @@ function ScheduleControls({
   gasLimit,
   localCommand,
   maxFeeGwei,
+  finalProductControls,
+  maxSpendReady,
+  concurrencyReady,
   readinessItems,
   scheduleBlocked,
   selectedStageCount,
@@ -501,6 +545,10 @@ function ScheduleControls({
   onGasLimit,
   onLocalCommandCopy,
   onMaxFee,
+  onTargetChain,
+  onRpcStatus,
+  onMaxSpend,
+  onConcurrency,
   onSchedule,
   onWalletCount,
   scheduleLoading,
@@ -511,6 +559,9 @@ function ScheduleControls({
   gasLimit: number;
   localCommand: string;
   maxFeeGwei: number;
+  finalProductControls: FinalProductControls;
+  maxSpendReady: boolean;
+  concurrencyReady: boolean;
   readinessItems: ReadinessItem[];
   scheduleBlocked: boolean;
   selectedStageCount: number;
@@ -525,6 +576,10 @@ function ScheduleControls({
   onGasLimit: (value: number) => void;
   onLocalCommandCopy: () => void;
   onMaxFee: (value: number) => void;
+  onTargetChain: (value: FinalProductControls["targetChainKey"]) => void;
+  onRpcStatus: (value: FinalProductControls["rpcStatus"]) => void;
+  onMaxSpend: (value: number) => void;
+  onConcurrency: (value: number) => void;
   onSchedule: () => void;
   onWalletCount: (value: number) => void;
   scheduleLoading: boolean;
@@ -537,7 +592,9 @@ function ScheduleControls({
         ? `Reduce to ${MAX_RECOMMENDED_WALLETS} wallets or fewer`
         : selectedStageCount === 0
           ? "Select a stage quantity"
-          : "Set a positive gas ceiling"
+          : !maxSpendReady || !concurrencyReady || finalProductControls.rpcStatus === "blocked"
+            ? "Fix final product controls"
+            : "Set a positive gas ceiling"
       : "Save read-only schedule";
 
   return (
@@ -575,6 +632,58 @@ function ScheduleControls({
           className={`${FIELD_CLASS} font-mono text-sm normal-case tracking-normal`}
         />
       </label>
+
+      <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50/80 p-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.24em] text-slate-500">Final product controls</p>
+            <h3 className="mt-1 text-lg font-black text-slate-950">Mainnet readiness, no keys held</h3>
+            <p className="mt-1 text-sm font-semibold text-slate-600">Web plans the run; the local CLI checks RPC and executes only on the operator machine.</p>
+          </div>
+          <Badge>Web plans · CLI local</Badge>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <label className="flex flex-col gap-2 text-xs font-black uppercase tracking-[0.18em] text-slate-500">
+            Target chain
+            <select
+              value={finalProductControls.targetChainKey}
+              onChange={(event) => onTargetChain(event.target.value as FinalProductControls["targetChainKey"])}
+              className={`${FIELD_CLASS} text-base normal-case tracking-normal`}
+            >
+              {FINAL_PRODUCT_CHAIN_OPTIONS.map((option) => (
+                <option key={option.key} value={option.key}>
+                  {option.label} · {option.detail}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-2 text-xs font-black uppercase tracking-[0.18em] text-slate-500">
+            RPC status
+            <select
+              value={finalProductControls.rpcStatus}
+              onChange={(event) => onRpcStatus(event.target.value as FinalProductControls["rpcStatus"])}
+              className={`${FIELD_CLASS} text-base normal-case tracking-normal`}
+            >
+              {RPC_STATUS_OPTIONS.map((option) => (
+                <option key={option.key} value={option.key}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <NumberField label="Max spend cap (ETH)" value={finalProductControls.maxSpendEth} min={0.000001} max={10_000} step={0.001} onChange={onMaxSpend} />
+          <NumberField label="Concurrency" value={finalProductControls.concurrency} min={1} max={walletCount} onChange={onConcurrency} />
+        </div>
+        <div className="mt-3 grid gap-2 text-sm font-semibold sm:grid-cols-3">
+          <div className="rounded-2xl border border-slate-200 bg-white p-3 text-slate-600">
+            Wallet alias count: <span className="font-black text-slate-950">{walletCount}</span> aliases, zero keys.
+          </div>
+          <div className={`rounded-2xl border p-3 ${maxSpendReady ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-700"}`}>
+            Spend cap: {maxSpendReady ? "covers" : "below"} estimated {totals.grandTotalEth} ETH.
+          </div>
+          <div className={`rounded-2xl border p-3 ${concurrencyReady ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-700"}`}>
+            Concurrency: {concurrencyReady ? `${finalProductControls.concurrency}/${walletCount}` : "must fit wallet aliases"}.
+          </div>
+        </div>
+      </div>
 
       <div className="mt-5 grid gap-3 sm:grid-cols-4">
         <Metric label="Gas / tx" value={`${formatNumber(gasPerTxEth)} ETH`} />
@@ -744,9 +853,18 @@ function buildReadinessItems(
   gasLimit: number,
   walletWarning: boolean,
   gasInputReady: boolean,
+  finalControls?: {
+    targetChainKey: FinalProductControls["targetChainKey"];
+    rpcStatus: FinalProductControls["rpcStatus"];
+    maxSpendEth: number;
+    concurrency: number;
+    maxSpendReady: boolean;
+    concurrencyReady: boolean;
+    grandTotalEth: string;
+  },
 ): ReadinessItem[] {
   const signedSelected = selectedStages.some((stage) => stage.source !== "onchain-seadrop");
-  return [
+  const items: ReadinessItem[] = [
     {
       label: "Stage selection",
       detail: selectedStages.length > 0 ? `${selectedStages.length}/${stages.length} selected` : "select at least one stage",
@@ -768,6 +886,28 @@ function buildReadinessItems(
       state: signedSelected ? "review" : "ready",
     },
   ];
+
+  if (finalControls) {
+    items.push(
+      {
+        label: "Target chain",
+        detail: `${finalControls.targetChainKey} · RPC ${finalControls.rpcStatus}`,
+        state: finalControls.rpcStatus === "blocked" ? "blocked" : finalControls.rpcStatus === "ready" ? "ready" : "review",
+      },
+      {
+        label: "Spend cap",
+        detail: `${finalControls.maxSpendEth} ETH cap vs ${finalControls.grandTotalEth} ETH estimate`,
+        state: finalControls.maxSpendReady ? "ready" : "blocked",
+      },
+      {
+        label: "Concurrency",
+        detail: `${finalControls.concurrency}/${walletCount} wallet(s) per local batch`,
+        state: finalControls.concurrencyReady ? "ready" : "blocked",
+      },
+    );
+  }
+
+  return items;
 }
 
 function getStageTiming(stage: MintStage, now: number): StageTiming {
@@ -902,11 +1042,6 @@ function formatCompactDate(value: string) {
   });
 }
 
-function buildLocalCommand(filename: string | null) {
-  const configName = filename ?? LOCAL_COMMAND_PLACEHOLDER;
-  return `npm run dev -- --config ${configName} --dry-run`;
-}
-
 function eligibilityLabel(value: MintStage["eligible"]) {
   const labels: Record<MintStage["eligible"], string> = {
     checked: "Checked",
@@ -928,20 +1063,12 @@ function calculateTotals(
   const selectedStages = stages.filter((stage) => (quantities[stage.id] ?? 0) > 0);
   const mintEth = selectedStages.reduce((sum, stage) => sum + Number(stage.priceEth || 0) * (quantities[stage.id] ?? 0) * walletCount, 0);
   const gasCeilingEth = selectedStages.length * walletCount * gasLimit * maxFeeGwei * 1e-9;
+  const grandTotalValue = mintEth + gasCeilingEth;
   return {
     mintEth: formatNumber(mintEth),
     gasCeilingEth: formatNumber(gasCeilingEth),
-    grandTotalEth: formatNumber(mintEth + gasCeilingEth),
-  };
-}
-
-function buildFinalProductControls(chain: string, walletCount: number, totals: ReturnType<typeof calculateTotals>): FinalProductControls {
-  const estimatedTotal = Number(totals.grandTotalEth);
-  return {
-    targetChainKey: chain === "robinhood" ? "robinhood" : "ethereum",
-    rpcStatus: "unchecked",
-    maxSpendEth: Number.isFinite(estimatedTotal) ? Math.max(0.001, estimatedTotal + 0.001) : 0.001,
-    concurrency: Math.max(1, Math.min(walletCount, 4)),
+    grandTotalEth: formatNumber(grandTotalValue),
+    grandTotalValue,
   };
 }
 

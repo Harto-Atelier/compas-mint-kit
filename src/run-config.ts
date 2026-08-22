@@ -148,24 +148,33 @@ export function parseRunConfig(value: unknown): RunConfig {
   const root = expectRecord(value, "config");
   const body = expectRecord((root.runConfig ?? root) as unknown, "config");
 
-  const collection = parseCollection(body.collection);
-  const stages = expectArray(body.stages, "stages").map((stage, index) => parseStage(stage, `stages[${index}]`));
-  const quantities = expectArray(body.quantities, "quantities").map((quantity, index) =>
-    parseQuantity(quantity, `quantities[${index}]`)
-  );
+  const collection = parseCollection(body.collection, body.chain);
+  const rawStages = expectArray(body.stages, "stages");
+  const stages = rawStages.map((stage, index) => parseStage(stage, `stages[${index}]`));
+  const quantities = body.quantities === undefined
+    ? rawStages.map((stage, index) => parseQuantityFromStage(stage, stages[index], `stages[${index}]`))
+    : expectArray(body.quantities, "quantities").map((quantity, index) =>
+      parseQuantity(quantity, `quantities[${index}]`)
+    );
 
   if (stages.length === 0) throw new Error("No mint stages supplied.");
   if (quantities.length === 0) throw new Error("Select at least one stage quantity.");
 
-  const walletCount = clampInteger(body.walletCount, 1, MAX_PREVIEW_WALLETS, "walletCount");
-  const maxFeeGwei = boundedNumber(body.maxFeeGwei, 0, MAX_FEE_GWEI, "maxFeeGwei");
-  const maxPriorityFeeGwei = body.maxPriorityFeeGwei === undefined
+  const walletInput = body.walletCount ?? expectRecord(body.wallets, "wallets").count;
+  const gasInput = body.gas === undefined ? body : expectRecord(body.gas, "gas");
+  const maxPriorityInput = body.maxPriorityFeeGwei ?? gasInput.maxPriorityFeeGwei;
+  const drainInput = body.drainAddress ?? (body.drain === undefined ? undefined : expectRecord(body.drain, "drain").address);
+  const notesInput = body.notes ?? body.warnings;
+
+  const walletCount = clampInteger(walletInput, 1, MAX_PREVIEW_WALLETS, "walletCount");
+  const maxFeeGwei = boundedNumber(gasInput.maxFeeGwei, 0, MAX_FEE_GWEI, "maxFeeGwei");
+  const maxPriorityFeeGwei = maxPriorityInput === undefined
     ? undefined
-    : boundedNumber(body.maxPriorityFeeGwei, 0, MAX_FEE_GWEI, "maxPriorityFeeGwei");
-  const gasLimit = clampInteger(body.gasLimit, 21_000, 2_000_000, "gasLimit");
-  const drainAddress = parseOptionalAddress(body.drainAddress, "drainAddress");
+    : boundedNumber(maxPriorityInput, 0, MAX_FEE_GWEI, "maxPriorityFeeGwei");
+  const gasLimit = clampInteger(gasInput.gasLimit, 21_000, 2_000_000, "gasLimit");
+  const drainAddress = parseOptionalAddress(drainInput, "drainAddress");
   const rpcUrls = parseOptionalRpcUrls(body.rpcUrls);
-  const notes = parseOptionalStringArray(body.notes, "notes");
+  const notes = parseOptionalStringArray(notesInput, "notes");
 
   const selected = quantities.filter((quantity) => quantity.quantity > 0);
   if (selected.length === 0) throw new Error("Set a quantity above zero for at least one stage.");
@@ -177,7 +186,7 @@ export function parseRunConfig(value: unknown): RunConfig {
   }
 
   return {
-    schemaVersion: clampInteger(body.schemaVersion ?? body.version ?? 1, 1, 1, "schemaVersion"),
+    schemaVersion: parseSchemaVersion(body.schemaVersion ?? body.version ?? 1),
     mode: "preview",
     collection,
     stages,
@@ -307,10 +316,12 @@ function readJsonFile(filePath: string): unknown {
   }
 }
 
-function parseCollection(value: unknown): RunCollection {
+function parseCollection(value: unknown, fallbackChainValue?: unknown): RunCollection {
   const collection = expectRecord(value, "collection");
-  const rawChain = expectRecord(collection.chain, "collection.chain");
-  const chainKey = expectString(rawChain.key, "collection.chain.key").toLowerCase();
+  const rawChain = collection.chain === undefined
+    ? expectRecord(fallbackChainValue, "chain")
+    : expectRecord(collection.chain, "collection.chain");
+  const chainKey = expectString(rawChain.key, collection.chain === undefined ? "chain.key" : "collection.chain.key").toLowerCase();
   const known = resolveChain(chainKey);
   if (!known) throw new Error(`Unknown collection.chain.key "${chainKey}".`);
 
@@ -335,7 +346,8 @@ function parseCollection(value: unknown): RunCollection {
 
 function parseStage(value: unknown, label: string): RunStage {
   const stage = expectRecord(value, label);
-  const id = oneOf(expectString(stage.id, `${label}.id`), STAGE_KINDS, `${label}.id`);
+  const rawId = stage.id ?? stage.stageId;
+  const id = oneOf(expectString(rawId, `${label}.id`), STAGE_KINDS, `${label}.id`);
   const source = oneOf(expectString(stage.source, `${label}.source`), STAGE_SOURCES, `${label}.source`);
   const status = oneOf(optionalString(stage.status) || "unknown", STAGE_STATUSES, `${label}.status`);
   const maxPerWallet = stage.maxPerWallet === null || stage.maxPerWallet === undefined
@@ -363,6 +375,19 @@ function parseQuantity(value: unknown, label: string): RunQuantity {
     stageId: oneOf(expectString(quantity.stageId, `${label}.stageId`), STAGE_KINDS, `${label}.stageId`),
     quantity: clampInteger(quantity.quantity, 0, 100, `${label}.quantity`),
   };
+}
+
+function parseQuantityFromStage(value: unknown, stage: RunStage, label: string): RunQuantity {
+  const rawStage = expectRecord(value, label);
+  return {
+    stageId: stage.id,
+    quantity: clampInteger(rawStage.quantityPerWallet ?? 0, 0, 100, `${label}.quantityPerWallet`),
+  };
+}
+
+function parseSchemaVersion(value: unknown): number {
+  if (value === "compas.mint-run-config.v1") return 1;
+  return clampInteger(value, 1, 1, "schemaVersion");
 }
 
 function assertNoSecretFields(value: unknown, pathLabel = "config"): void {
