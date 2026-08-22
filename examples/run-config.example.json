@@ -40,7 +40,6 @@
       "maxPerWallet": 3,
       "eligible": "eligible",
       "feeRecipient": "0x0000a26b00c1F0DF003000390027140000fAa719",
-      "calldataPreview": "0x1e7a6d5a000000000000000000000000",
       "summary": "Public SeaDrop stage discovered on-chain; CLI config mode still prints only a dry-run plan.",
       "warnings": []
     }

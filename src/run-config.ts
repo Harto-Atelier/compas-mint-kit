@@ -16,6 +16,8 @@ const STAGE_SOURCES: StageSource[] = ["onchain-seadrop", "opensea-signed-preview
 const STAGE_STATUSES: StageStatus[] = ["ended", "live", "upcoming", "unknown"];
 
 const MAX_PREVIEW_WALLETS = 200;
+const MAX_FEE_GWEI = 10_000;
+const PRIVATE_KEY_LIKE_VALUE_RE = /(?:^|[\s,:'"=])(?:0x)?[a-fA-F0-9]{64}(?=$|[\s,:'"])/;
 
 export interface CliArgs {
   help: boolean;
@@ -155,10 +157,10 @@ export function parseRunConfig(value: unknown): RunConfig {
   if (quantities.length === 0) throw new Error("Select at least one stage quantity.");
 
   const walletCount = clampInteger(body.walletCount, 1, MAX_PREVIEW_WALLETS, "walletCount");
-  const maxFeeGwei = finiteNumber(body.maxFeeGwei, "maxFeeGwei");
+  const maxFeeGwei = boundedNumber(body.maxFeeGwei, 0, MAX_FEE_GWEI, "maxFeeGwei");
   const maxPriorityFeeGwei = body.maxPriorityFeeGwei === undefined
     ? undefined
-    : finiteNumber(body.maxPriorityFeeGwei, "maxPriorityFeeGwei");
+    : boundedNumber(body.maxPriorityFeeGwei, 0, MAX_FEE_GWEI, "maxPriorityFeeGwei");
   const gasLimit = clampInteger(body.gasLimit, 21_000, 2_000_000, "gasLimit");
   const drainAddress = parseOptionalAddress(body.drainAddress, "drainAddress");
   const rpcUrls = parseOptionalRpcUrls(body.rpcUrls);
@@ -347,7 +349,7 @@ function parseStage(value: unknown, label: string): RunStage {
     status,
     startTime: parseOptionalDate(stage.startTime, `${label}.startTime`),
     endTime: parseOptionalDate(stage.endTime, `${label}.endTime`),
-    priceEth: finiteNumber(stage.priceEth ?? 0, `${label}.priceEth`),
+    priceEth: boundedNumber(stage.priceEth ?? 0, 0, 10_000, `${label}.priceEth`),
     maxPerWallet,
     feeRecipient,
     warnings: parseOptionalStringArray(stage.warnings, `${label}.warnings`),
@@ -363,6 +365,12 @@ function parseQuantity(value: unknown, label: string): RunQuantity {
 }
 
 function assertNoSecretFields(value: unknown, pathLabel = "config"): void {
+  if (typeof value === "string") {
+    if (PRIVATE_KEY_LIKE_VALUE_RE.test(value)) {
+      throw new Error(`Private-key-shaped value at "${pathLabel}" is not allowed in a run config.`);
+    }
+    return;
+  }
   if (Array.isArray(value)) {
     value.forEach((item, index) => assertNoSecretFields(item, `${pathLabel}[${index}]`));
     return;
@@ -372,7 +380,7 @@ function assertNoSecretFields(value: unknown, pathLabel = "config"): void {
   for (const [key, child] of Object.entries(value as JsonRecord)) {
     const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
     if (
-      ["privatekey", "privatekeys", "walletkey", "walletkeys", "mnemonic", "seed", "seedphrase", "secret", "secrets", "password", "apikey", "accesstoken", "bearertoken"].includes(normalized)
+      ["privatekey", "privatekeys", "walletkey", "walletkeys", "mnemonic", "seed", "seedphrase", "secret", "secrets", "password", "apikey", "accesstoken", "bearertoken", "rawtx", "rawtransaction", "signedtx", "signedtransaction", "signature", "signatures"].includes(normalized)
     ) {
       throw new Error(`Secret-like field "${pathLabel}.${key}" is not allowed in a run config.`);
     }
@@ -408,6 +416,12 @@ function oneOf<T extends string>(value: string, allowed: readonly T[], label: st
 function finiteNumber(value: unknown, label: string): number {
   const number = Number(value);
   if (!Number.isFinite(number) || number < 0) throw new Error(`${label} must be a non-negative number.`);
+  return number;
+}
+
+function boundedNumber(value: unknown, min: number, max: number, label: string): number {
+  const number = finiteNumber(value, label);
+  if (number < min || number > max) throw new Error(`${label} must be a number from ${min} to ${max}.`);
   return number;
 }
 
