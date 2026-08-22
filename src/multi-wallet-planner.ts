@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import { formatEther, getAddress, isAddress, JsonRpcProvider, Wallet } from "ethers";
+import { formatEther, getAddress, isAddress, JsonRpcProvider, parseEther, Wallet } from "ethers";
 import { ChainProfile, resolveChain } from "./chains";
 import { buildLocalMintPlan, LocalMintPlan } from "./seadrop-public";
 import { maskRpc, planRpcs, resolveRpcsForChain, toRpcUrl } from "./rpc-resolver";
@@ -23,6 +23,7 @@ export interface ResolvedWallet {
 export interface CliPlanOptions {
   walletDescriptors: string[];
   chainKey: string;
+  chainExplicit: boolean;
   contract?: string;
   quantity: number;
   rpcInputs: string[];
@@ -31,10 +32,29 @@ export interface CliPlanOptions {
   priorityFeeGwei: number;
   gasLimit: number;
   concurrency?: number;
+  maxSpendWei?: bigint;
+  maxSpendEthText?: string;
+  broadcastConfirmation?: string;
   json: boolean;
   mode: MultiWalletMode;
   broadcastRequested: boolean;
   help: boolean;
+}
+
+export interface BroadcastSafetyGateInput {
+  chainKey: string;
+  chainExplicit: boolean;
+  maxSpendWei?: bigint;
+  maxSpendEthText?: string;
+  confirmation?: string;
+}
+
+export interface BroadcastSafetyReadiness {
+  broadcastPermitted: true;
+  spendCapWei: bigint;
+  confirmationPhrase: string;
+  requiredReReadBeforeSigning: true;
+  privateKeyMaterialLogged: false;
 }
 
 export interface DryRunBatchEntry {
@@ -257,10 +277,83 @@ export function buildDryRunPlan(input: BuildDryRunPlanInput): DryRunPlan {
   };
 }
 
+export function expectedBroadcastConfirmation(
+  chainKey: string,
+  nftContract: string,
+  maxSpendEthText: string,
+  nativeSymbol: string
+): string {
+  return `BROADCAST ${chainKey.trim().toUpperCase()} ${normalizeAddress(nftContract)} MAX ${maxSpendEthText.trim()} ${nativeSymbol}`;
+}
+
+export function buildBroadcastSafetyReadiness(
+  plan: DryRunPlan,
+  gate: BroadcastSafetyGateInput
+): BroadcastSafetyReadiness {
+  if (!gate.chainExplicit) {
+    throw new Error("--chain is required with --broadcast; CHAIN env/defaults are ignored for broadcast safety.");
+  }
+  if (gate.maxSpendWei === undefined || !gate.maxSpendEthText) {
+    throw new Error("--max-spend-eth is required with --broadcast and must cap the total max upfront spend.");
+  }
+  if (gate.maxSpendWei <= 0n) {
+    throw new Error("--max-spend-eth must be greater than zero.");
+  }
+  if (plan.totals.maxUpfrontWei > gate.maxSpendWei) {
+    throw new Error(
+      `Planned max upfront ${formatEther(plan.totals.maxUpfrontWei)} ${plan.chain.nativeSymbol} exceeds --max-spend-eth cap ${formatEther(gate.maxSpendWei)} ${plan.chain.nativeSymbol}.`
+    );
+  }
+  const addressOnlyWallets = plan.perWallet.filter((wallet) => wallet.sourceKind !== "private-key-env");
+  if (addressOnlyWallets.length > 0) {
+    throw new Error(
+      `--broadcast requires private-key env wallets; address-only wallet(s): ${addressOnlyWallets.map((wallet) => wallet.alias).join(", ")}.`
+    );
+  }
+
+  const expected = expectedBroadcastConfirmation(gate.chainKey, plan.nftContract, gate.maxSpendEthText, plan.chain.nativeSymbol);
+  if ((gate.confirmation || "").trim() !== expected) {
+    throw new Error(`--broadcast requires typed confirmation: --confirm-broadcast "${expected}"`);
+  }
+
+  return {
+    broadcastPermitted: true,
+    spendCapWei: gate.maxSpendWei,
+    confirmationPhrase: expected,
+    requiredReReadBeforeSigning: true,
+    privateKeyMaterialLogged: false,
+  };
+}
+
+export function assertFreshMintPlanUnchanged(original: LocalMintPlan, refreshed: LocalMintPlan): void {
+  const changed: string[] = [];
+  if (original.to.toLowerCase() !== refreshed.to.toLowerCase()) changed.push("to");
+  if (original.data !== refreshed.data) changed.push("data");
+  if (original.value !== refreshed.value) changed.push("value");
+  if (original.feeRecipient.toLowerCase() !== refreshed.feeRecipient.toLowerCase()) changed.push("feeRecipient");
+
+  const dropFields: (keyof LocalMintPlan["drop"])[] = [
+    "mintPrice",
+    "startTime",
+    "endTime",
+    "maxTotalMintableByWallet",
+    "feeBps",
+    "restrictFeeRecipients",
+  ];
+  for (const field of dropFields) {
+    if (original.drop[field] !== refreshed.drop[field]) changed.push(`drop.${field}`);
+  }
+
+  if (changed.length > 0) {
+    throw new Error(`On-chain contract/stage changed before signing: ${changed.join(", ")}. Re-run the dry-run plan.`);
+  }
+}
+
 export function parseCliPlanArgs(args: string[]): CliPlanOptions {
   const opts: CliPlanOptions = {
     walletDescriptors: [],
     chainKey: (process.env.CHAIN || "base").trim().toLowerCase(),
+    chainExplicit: false,
     quantity: 1,
     rpcInputs: [],
     rpcEnvVars: [],
@@ -315,6 +408,7 @@ export function parseCliPlanArgs(args: string[]): CliPlanOptions {
         break;
       case "--chain":
         opts.chainKey = takesValue(name).toLowerCase();
+        opts.chainExplicit = true;
         break;
       case "--contract":
       case "--nft":
@@ -331,6 +425,15 @@ export function parseCliPlanArgs(args: string[]): CliPlanOptions {
         break;
       case "--max-fee-gwei":
         opts.maxFeeGwei = positiveNumber(takesValue(name), "max fee");
+        break;
+      case "--max-spend-eth": {
+        const text = positiveDecimalText(takesValue(name), "max spend");
+        opts.maxSpendEthText = text;
+        opts.maxSpendWei = parseEther(text);
+        break;
+      }
+      case "--confirm-broadcast":
+        opts.broadcastConfirmation = takesValue(name).trim();
         break;
       case "--priority-fee-gwei":
       case "--tip-gwei":
@@ -356,11 +459,6 @@ export async function runMultiWalletPlanner(args: string[]): Promise<void> {
     console.log(PLAN_HELP);
     return;
   }
-  if (opts.broadcastRequested) {
-    throw new Error(
-      "Multi-wallet broadcast is intentionally not implemented yet. Re-run without --broadcast for the default dry-run/no-broadcast plan, or use the interactive wizard for supervised signing."
-    );
-  }
   if (!opts.contract) {
     throw new Error("--contract 0x... is required for multi-wallet planning.");
   }
@@ -379,8 +477,14 @@ export async function runMultiWalletPlanner(args: string[]): Promise<void> {
   if (checked.urls.length === 0) {
     throw new Error(`No usable RPC endpoint for ${chain.name}.`);
   }
+  if (!chain.seadropAddress) {
+    throw new Error(
+      `${chain.name} has no verified SeaDrop address configured. ` +
+        `Set SEADROP_ADDRESS_${chain.key.toUpperCase()} or CHAIN_REGISTRY_JSON before building executable calldata.`
+    );
+  }
 
-  const mintPlan = await buildLocalMintPlan(checked.urls[0], opts.contract, opts.quantity);
+  const mintPlan = await buildLocalMintPlan(checked.urls[0], opts.contract, opts.quantity, chain.seadropAddress);
   if (!mintPlan) {
     throw new Error(`No SeaDrop public drop readable for ${opts.contract} on ${chain.name}.`);
   }
@@ -403,6 +507,29 @@ export async function runMultiWalletPlanner(args: string[]): Promise<void> {
     balancesWei: balances,
   });
 
+  if (opts.broadcastRequested) {
+    const readiness = buildBroadcastSafetyReadiness(plan, {
+      chainKey: chain.key,
+      chainExplicit: opts.chainExplicit,
+      maxSpendWei: opts.maxSpendWei,
+      maxSpendEthText: opts.maxSpendEthText,
+      confirmation: opts.broadcastConfirmation,
+    });
+    const refreshedMintPlan = await buildLocalMintPlan(checked.urls[0], opts.contract, opts.quantity, chain.seadropAddress);
+    if (!refreshedMintPlan) {
+      throw new Error("On-chain contract/stage re-read failed before signing; no signing or broadcast attempted.");
+    }
+    assertFreshMintPlanUnchanged(mintPlan, refreshedMintPlan);
+
+    if (opts.json) {
+      console.log(JSON.stringify({ plan, broadcastSafety: readiness, execution: "disabled-no-sign-no-broadcast" }, bigintJsonReplacer, 2));
+    } else {
+      printDryRunPlan(plan, checked.urls, rpcResolution.source);
+      printBroadcastReadiness(readiness);
+    }
+    return;
+  }
+
   if (opts.json) {
     console.log(JSON.stringify(plan, bigintJsonReplacer, 2));
   } else {
@@ -421,7 +548,7 @@ Options
                               The env var may hold a public address for planning
                               or a private key for a future explicit broadcast path.
                               Never pass raw private keys as CLI arguments.
-  --chain base                ethereum | base | robinhood (default: CHAIN env or base)
+  --chain base                ethereum | base | robinhood (required with --broadcast)
   --contract 0x...            NFT contract with a SeaDrop public stage (required)
   --quantity 1                NFTs per wallet
   --rpc URL_OR_KEY            Manual RPC URL/API key. Repeatable.
@@ -430,12 +557,18 @@ Options
   --priority-fee-gwei 0.05    EIP-1559 tip estimate
   --gas-limit 250000          Per-wallet gas limit estimate
   --concurrency N             Planned concurrent sends per batch (default: all wallets)
-  --json                      Print machine-readable dry-run plan
-  --broadcast                 Reserved future flag; currently aborts safely
+  --max-spend-eth 0.25        Required with --broadcast; hard cap on max upfront spend
+  --confirm-broadcast TEXT    Required with --broadcast; exact typed confirmation
+  --json                      Print machine-readable plan
+  --broadcast                 Mainnet broadcast architecture mode; validates hard
+                              gates and re-reads the stage, but this build still
+                              stops before signing/broadcasting.
 
 Safety
-  This command never broadcasts. Dry-run/no-broadcast is the default and only
-  implemented mode. Raw private keys in CLI arguments are rejected.
+  Dry-run/no-broadcast is the default. Broadcast architecture requires explicit
+  --chain, --max-spend-eth, private-key env wallets, and this exact typed phrase:
+  BROADCAST <CHAIN> <CONTRACT> MAX <CAP> <SYMBOL>
+  Raw private keys in CLI arguments are rejected and private keys are never logged.
 `;
 
 function printDryRunPlan(plan: DryRunPlan, rpcUrls: string[], rpcSource: string): void {
@@ -468,7 +601,15 @@ function printDryRunPlan(plan: DryRunPlan, rpcUrls: string[], rpcSource: string)
   });
 
   console.log(chalk.bold.yellow("\nDRY RUN ONLY: nothing was signed or broadcast."));
-  console.log(chalk.gray("Use the existing interactive wizard for supervised live firing; multi-wallet --broadcast is reserved and currently blocked."));
+  console.log(chalk.gray("Use --broadcast only with explicit chain, spend cap, typed confirmation, and operator control."));
+}
+
+function printBroadcastReadiness(readiness: BroadcastSafetyReadiness): void {
+  console.log(chalk.bold.red("\n── BROADCAST SAFETY GATES PASSED (ARCHITECTURE ONLY) ──"));
+  console.log(chalk.gray(`  Spend cap:     ${formatEther(readiness.spendCapWei)}`));
+  console.log(chalk.gray(`  Confirmed:     ${readiness.confirmationPhrase}`));
+  console.log(chalk.gray("  Stage re-read: unchanged immediately before the future signing boundary"));
+  console.log(chalk.bold.yellow("  NO SIGNING OR BROADCAST IS IMPLEMENTED IN THIS CLI PATH."));
 }
 
 function firstSeparator(value: string): number {
@@ -521,6 +662,17 @@ function positiveNumber(value: string, label: string, allowZero = false): number
   return parsed;
 }
 
+function positiveDecimalText(value: string, label: string): string {
+  const text = value.trim();
+  if (!/^(?:0|[1-9]\d*)(?:\.\d{1,18})?$/.test(text)) {
+    throw new Error(`${label} must be a positive ETH decimal with up to 18 decimals.`);
+  }
+  if (parseEther(text) <= 0n) {
+    throw new Error(`${label} must be greater than zero.`);
+  }
+  return text;
+}
+
 function positiveInteger(value: string, label: string): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
@@ -548,7 +700,7 @@ function resolveManualRpcs(opts: CliPlanOptions, chain: ChainProfile): string[] 
     .filter(Boolean)
     .map((value) => {
       const url = toRpcUrl(value, chain.key);
-      if (!url) throw new Error(`RPC value for ${chain.name} is not a URL or usable API key: ${value}`);
+      if (!url) throw new Error(`RPC value for ${chain.name} is not a URL or supported provider key format.`);
       return url;
     });
 }

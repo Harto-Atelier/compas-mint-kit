@@ -36,7 +36,7 @@ This fork now separates planning from execution:
    produced locally.
 3. **Export a run config** — the planner output should be treated as a portable
    JSON run config: collection address, chain, selected stages, quantities,
-   wallet count, gas assumptions, fire time, optional drain address, and warnings.
+   wallet count, gas assumptions, fire time, optional sweep-destination label, and warnings.
    It must not contain private keys, seed phrases, session cookies, or RPC secrets.
 4. **Local CLI dry-run first** — take the exported config to the CLI on your own
    machine, load hot-wallet keys only in the terminal, and dry-run the plan there:
@@ -123,6 +123,8 @@ nodes.
 
 > **Never put private keys in `.env`.** You paste them into the CLI at run time.
 > They're held in memory for that run only and never written to disk.
+> Keep RPC URLs/API keys local too: do not copy `.env` into Vercel, and never put
+> wallet keys, signer material, or private RPC credentials in `NEXT_PUBLIC_*`.
 
 ## Step 3 — Run it
 
@@ -218,9 +220,11 @@ Each of these is checked *before* anything is broadcast:
 - **Wallet can't cover the upfront reservation** — refuses to fire and tells you
   the ceiling you *can* afford.
 - **Firing before the stage opens** — SeaDrop reverts with `NotActive` and burns
-  gas. "Fire now" isn't offered when the stage opens later.
-- **Wrong network** — every RPC is checked for its chain ID; any on the wrong
-  chain is dropped rather than blasted at.
+  gas. "Fire now" isn't offered when the stage opens later, and custom times
+  before the on-chain start are refused.
+- **Wrong or unverified network** — every RPC is checked for its chain ID; any on
+  the wrong chain is dropped, and the tool refuses to sign/broadcast unless at
+  least one endpoint confirms the selected chain.
 - **Quantity above the per-wallet cap** — warned before you fire.
 
 If a transaction is rejected by every endpoint, it says so plainly instead of
@@ -246,6 +250,8 @@ code changes needed.
 - Private keys are pasted at run time, kept in memory, and **never written to
   disk or transmitted anywhere** except as a locally-signed transaction.
 - `.env`, `wallets/` and `*.key` are all git-ignored.
+- Provider errors are redacted before logging so raw signed transactions and
+  64-hex key material are not printed to the terminal.
 - Use dedicated hot wallets funded with only what you intend to spend.
 - Read [`src/local-mint.ts`](src/local-mint.ts) if you want to verify exactly what
   gets signed and sent — it's about 150 lines.

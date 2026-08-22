@@ -8,7 +8,7 @@
 
 import chalk from "chalk";
 import { JsonRpcProvider, Wallet, formatEther, getAddress, isAddress } from "ethers";
-import { CHAINS, ChainProfile, resolveChain } from "./chains";
+import { ChainProfile, getChains, resolveChain } from "./chains";
 import { parseNftLink } from "./nft-link";
 import { resolveSlug } from "./slug-resolver";
 import {
@@ -31,12 +31,13 @@ export async function runWizard(): Promise<void> {
   const walletKeys = await promptKeys();
 
   // ── 2. Chain ──────────────────────────────────────────────────────────
+  const chains = getChains();
   let chainKey = await askChoice<string>(
     "Which chain?",
-    CHAINS.map((c) => ({ label: c.name, value: c.key, hint: `chain id ${c.chainId}` })),
+    chains.map((c) => ({ label: c.name, value: c.key, hint: `chain id ${c.chainId}` })),
     Math.max(
       0,
-      CHAINS.findIndex((c) => c.key === (process.env.CHAIN || "base").toLowerCase())
+      chains.findIndex((c) => c.key === (process.env.CHAIN || "base").toLowerCase())
     )
   );
 
@@ -81,10 +82,10 @@ export async function runWizard(): Promise<void> {
     throw new Error(`No usable RPC endpoint for ${chainProfile.name}`);
   }
   if (!plan.verified) {
-    console.log(chalk.yellow(`  ⚠ No endpoint confirmed chain id ${chainProfile.chainId}.`));
-    if (!(await askYesNo("Continue anyway?", false))) {
-      throw new Error("Aborted — could not verify the RPC chain");
-    }
+    throw new Error(
+      `Aborted — no RPC endpoint confirmed chain id ${chainProfile.chainId} (${chainProfile.name}). ` +
+        "Refusing to sign or broadcast against an unverified mainnet boundary."
+    );
   } else {
     console.log(chalk.green(`  ✓ Confirmed chain id ${chainProfile.chainId} (${chainProfile.name})`));
   }
@@ -92,7 +93,13 @@ export async function runWizard(): Promise<void> {
 
   // ── 6. Read the public drop from chain ────────────────────────────────
   console.log(chalk.bold.white("\nDrop"));
-  const mintPlan = await buildLocalMintPlan(rpcUrls[0], nftContract, quantity);
+  if (!chainProfile.seadropAddress) {
+    throw new Error(
+      `${chainProfile.name} has no verified SeaDrop address configured. ` +
+        `Set SEADROP_ADDRESS_${chainProfile.key.toUpperCase()} or CHAIN_REGISTRY_JSON before building executable calldata.`
+    );
+  }
+  const mintPlan = await buildLocalMintPlan(rpcUrls[0], nftContract, quantity, chainProfile.seadropAddress);
   if (!mintPlan) {
     throw new Error(
       `No SeaDrop public drop readable for ${nftContract} on ${chainProfile.name}.\n` +
@@ -447,8 +454,8 @@ async function promptTiming(
     try {
       const custom = istTimeToDate(raw);
       if (custom.getTime() < startTime * 1000) {
-        console.log(chalk.bold.red(`  ✗ That is before the stage opens (${toIST(at)} IST) — it will revert.`));
-        if (!(await askYesNo("Use it anyway?", false))) continue;
+        console.log(chalk.bold.red(`  ✗ That is before the stage opens (${toIST(at)} IST) — refusing to schedule a known-reverting mainnet transaction.`));
+        continue;
       }
       return { targetStart: custom, timingLabel: `custom — ${toIST(custom)} IST` };
     } catch (err: any) {

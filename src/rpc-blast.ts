@@ -49,6 +49,9 @@ export interface PreparedBlast {
   body: string;
 }
 
+const RAW_TRANSACTION_LIKE_RE = /0x[0-9a-fA-F]{130,}/g;
+const PRIVATE_KEY_LIKE_RE = /(?:^|[^0-9a-fA-F])((?:0x)?[0-9a-fA-F]{64})(?=$|[^0-9a-fA-F])/g;
+
 // Call this BEFORE the fire moment (after signing) — does all compute work upfront
 export function prepareBlast(rawTx: string): PreparedBlast {
   return {
@@ -98,7 +101,7 @@ export function blastToAll(
             console.log(chalk.green(`  [${i}] ${ep.label}  TX: ${json.result}`));
             results.push({ label: ep.label, txHash: json.result, error: null });
           } else if (json.error) {
-            const errMsg = json.error.message || JSON.stringify(json.error);
+            const errMsg = redactSensitive(json.error.message || JSON.stringify(json.error));
             if (errMsg.includes("already known") || errMsg.includes("already exists")) {
               console.log(chalk.yellow(`  [${i}] ${ep.label}  ERR: already known`));
             } else {
@@ -107,12 +110,14 @@ export function blastToAll(
             results.push({ label: ep.label, txHash: null, error: errMsg });
           }
         } catch (err: any) {
-          console.log(chalk.red(`  [${i}] ${ep.label}  ERR: ${err.message}`));
-          results.push({ label: ep.label, txHash: null, error: err.message });
+          const errMsg = redactSensitive(err.message);
+          console.log(chalk.red(`  [${i}] ${ep.label}  ERR: ${errMsg}`));
+          results.push({ label: ep.label, txHash: null, error: errMsg });
         }
       } else {
-        console.log(chalk.red(`  [${i}] ${ep.label}  ERR: ${s.reason?.message || s.reason}`));
-        results.push({ label: ep.label, txHash: null, error: s.reason?.message || String(s.reason) });
+        const errMsg = redactSensitive(s.reason?.message || String(s.reason));
+        console.log(chalk.red(`  [${i}] ${ep.label}  ERR: ${errMsg}`));
+        results.push({ label: ep.label, txHash: null, error: errMsg });
       }
     }
     return results;
@@ -123,6 +128,12 @@ export function blastToAll(
 }
 
 // Wait for tx receipt and return block info
+export function redactSensitive(value: unknown): string {
+  return String(value ?? "")
+    .replace(RAW_TRANSACTION_LIKE_RE, "[redacted-raw-transaction]")
+    .replace(PRIVATE_KEY_LIKE_RE, (match, key: string) => match.replace(key, "[redacted-64-hex]"));
+}
+
 export async function waitForReceipt(
   txHash: string,
   rpcUrl: string,

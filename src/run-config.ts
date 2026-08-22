@@ -18,6 +18,7 @@ const STAGE_STATUSES: StageStatus[] = ["ended", "live", "upcoming", "unknown"];
 const MAX_PREVIEW_WALLETS = 200;
 const MAX_FEE_GWEI = 10_000;
 const PRIVATE_KEY_LIKE_VALUE_RE = /(?:^|[\s,:'"=])(?:0x)?[a-fA-F0-9]{64}(?=$|[\s,:'"])/;
+const RAW_TRANSACTION_LIKE_VALUE_RE = /0x[0-9a-fA-F]{130,}/;
 
 export interface CliArgs {
   help: boolean;
@@ -369,6 +370,9 @@ function assertNoSecretFields(value: unknown, pathLabel = "config"): void {
     if (PRIVATE_KEY_LIKE_VALUE_RE.test(value)) {
       throw new Error(`Private-key-shaped value at "${pathLabel}" is not allowed in a run config.`);
     }
+    if (RAW_TRANSACTION_LIKE_VALUE_RE.test(value)) {
+      throw new Error(`Raw-transaction-shaped value at "${pathLabel}" is not allowed in a run config.`);
+    }
     return;
   }
   if (Array.isArray(value)) {
@@ -380,7 +384,7 @@ function assertNoSecretFields(value: unknown, pathLabel = "config"): void {
   for (const [key, child] of Object.entries(value as JsonRecord)) {
     const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
     if (
-      ["privatekey", "privatekeys", "walletkey", "walletkeys", "mnemonic", "seed", "seedphrase", "secret", "secrets", "password", "apikey", "accesstoken", "bearertoken", "rawtx", "rawtransaction", "signedtx", "signedtransaction", "signature", "signatures"].includes(normalized)
+      ["privatekey", "privatekeys", "walletkey", "walletkeys", "mnemonic", "seed", "seedphrase", "secret", "secrets", "password", "apikey", "accesstoken", "bearertoken", "cookie", "cookies", "rpcurl", "rpcurls", "providerurl", "providerurls", "rawtx", "rawtransaction", "signedtx", "signedtransaction", "signature", "signatures"].includes(normalized)
     ) {
       throw new Error(`Secret-like field "${pathLabel}.${key}" is not allowed in a run config.`);
     }

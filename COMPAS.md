@@ -28,9 +28,12 @@ The mint kit now has two explicit lanes:
 - **Keep keys out of the browser.** The console is no-custody by design: no
   private keys, seed phrases, wallet signatures, or transaction broadcasts in
   browser state or API payloads.
+- **Keep hosted env empty of execution secrets.** The web console should not need
+  Vercel secrets; never expose wallet keys, signer material, or private RPC URLs
+  through `NEXT_PUBLIC_*`.
 - **Export a run config.** Planner output is a handoff file for the local
   executor: chain, collection address, selected stages, quantities, wallet count,
-  gas limit/max fee, fire time, optional drain address, and warnings. It is not a
+  gas limit/max fee, fire time, optional sweep-destination label, and warnings. It is not a
   wallet file and must not contain secrets.
 - **Dry-run locally.** Bring the run config to the root CLI, enter hot-wallet keys
   only in the terminal, and run the local checks before committing to a mint. With

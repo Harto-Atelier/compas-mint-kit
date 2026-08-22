@@ -11,8 +11,12 @@
 // OpenSea and there is no local equivalent.
 
 import { Contract, Interface, JsonRpcProvider } from "ethers";
+import { OPENSEA_SEADROP_ADDRESS } from "./chains";
 
-export const SEADROP_ADDRESS = "0x00005EA00Ac477B1030CE78506496e8C2dE24bf5";
+// Backward-compatible export for tests/consumers that need the verified
+// Ethereum/Base OpenSea SeaDrop singleton. Production read/build paths accept a
+// chain-specific address and must not silently reuse this on unknown chains.
+export const SEADROP_ADDRESS = OPENSEA_SEADROP_ADDRESS;
 
 // OpenSea's standard fee collector — the usual allowed recipient on their drops.
 // Only used when a drop leaves the recipient list empty and unrestricted, since
@@ -49,10 +53,11 @@ export interface LocalMintPlan {
 // keeps drop config on the token contract itself.
 export async function fetchPublicDrop(
   rpcUrl: string,
-  nftContract: string
+  nftContract: string,
+  seadropAddress: string
 ): Promise<PublicDrop | null> {
   const provider = new JsonRpcProvider(rpcUrl);
-  const seadrop = new Contract(SEADROP_ADDRESS, PUBLIC_ABI, provider);
+  const seadrop = new Contract(seadropAddress, PUBLIC_ABI, provider);
 
   try {
     const raw = await seadrop.getPublicDrop(nftContract);
@@ -79,10 +84,11 @@ export async function fetchPublicDrop(
 export async function resolveFeeRecipient(
   rpcUrl: string,
   nftContract: string,
-  restricted: boolean
+  restricted: boolean,
+  seadropAddress: string
 ): Promise<{ address: string; source: string } | null> {
   const provider = new JsonRpcProvider(rpcUrl);
-  const seadrop = new Contract(SEADROP_ADDRESS, PUBLIC_ABI, provider);
+  const seadrop = new Contract(seadropAddress, PUBLIC_ABI, provider);
 
   let allowed: string[] = [];
   try {
@@ -120,16 +126,17 @@ export function encodeMintPublic(
 export async function buildLocalMintPlan(
   rpcUrl: string,
   nftContract: string,
-  quantity: number
+  quantity: number,
+  seadropAddress = SEADROP_ADDRESS
 ): Promise<LocalMintPlan | null> {
-  const drop = await fetchPublicDrop(rpcUrl, nftContract);
+  const drop = await fetchPublicDrop(rpcUrl, nftContract, seadropAddress);
   if (!drop) return null;
 
-  const fee = await resolveFeeRecipient(rpcUrl, nftContract, drop.restrictFeeRecipients);
+  const fee = await resolveFeeRecipient(rpcUrl, nftContract, drop.restrictFeeRecipients, seadropAddress);
   if (!fee) return null;
 
   return {
-    to: SEADROP_ADDRESS,
+    to: seadropAddress,
     data: encodeMintPublic(nftContract, fee.address, quantity),
     value: drop.mintPrice * BigInt(quantity),
     drop,

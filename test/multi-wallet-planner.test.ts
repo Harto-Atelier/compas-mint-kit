@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  assertFreshMintPlanUnchanged,
   buildDryRunPlan,
+  buildBroadcastSafetyReadiness,
+  expectedBroadcastConfirmation,
   parseCliPlanArgs,
   parseWalletSources,
   resolveWalletsFromEnv,
@@ -86,19 +89,94 @@ test("buildDryRunPlan estimates calldata, wallet costs and concurrency batches",
   assert.deepEqual(plan.concurrency.batches.map((batch) => batch.map((entry) => entry.alias)), [["w1", "w2"], ["w3"]]);
 });
 
-test("parseCliPlanArgs defaults to dry-run and reserves broadcast behind an explicit blocked flag", () => {
+test("parseCliPlanArgs defaults to dry-run and records broadcast gate inputs", () => {
   const opts = parseCliPlanArgs([
     "--wallet", "hot=HOT_WALLET_KEY",
     "--contract", "0x000000000000000000000000000000000000c0Fe",
   ]);
   assert.equal(opts.mode, "dry-run");
   assert.equal(opts.broadcastRequested, false);
+  assert.equal(opts.chainExplicit, false);
+  assert.equal(opts.maxSpendWei, undefined);
 
+  const contract = "0x000000000000000000000000000000000000c0Fe";
+  const phrase = expectedBroadcastConfirmation("ethereum", contract, "0.2", "ETH");
   const broadcast = parseCliPlanArgs([
     "--wallet", "hot=HOT_WALLET_KEY",
-    "--contract", "0x000000000000000000000000000000000000c0Fe",
+    "--chain", "ethereum",
+    "--contract", contract,
+    "--max-spend-eth", "0.2",
+    "--confirm-broadcast", phrase,
     "--broadcast",
   ]);
   assert.equal(broadcast.mode, "broadcast-requested");
   assert.equal(broadcast.broadcastRequested, true);
+  assert.equal(broadcast.chainExplicit, true);
+  assert.equal(broadcast.maxSpendEthText, "0.2");
+  assert.equal(broadcast.maxSpendWei, 200_000_000_000_000_000n);
+  assert.equal(broadcast.broadcastConfirmation, phrase);
+});
+
+test("broadcast readiness requires explicit chain, cap, private-key wallets and typed confirmation", () => {
+  const plan = buildDryRunPlan({
+    chainName: "Ethereum",
+    chainId: 1,
+    nativeSymbol: "ETH",
+    nftContract: "0x000000000000000000000000000000000000c0Fe",
+    quantity: 1,
+    wallets: [{ alias: "hot", envVar: "HOT_KEY", address: "0x0000000000000000000000000000000000000001", sourceKind: "private-key-env" }],
+    mintPlan,
+    gasLimit: 250_000,
+    maxFeePerGas: 100_000_000_000n,
+    maxPriorityFeePerGas: 1_000_000_000n,
+    concurrency: 1,
+    mode: "broadcast-requested",
+  });
+  const phrase = expectedBroadcastConfirmation("ethereum", plan.nftContract, "0.2", "ETH");
+
+  assert.throws(
+    () => buildBroadcastSafetyReadiness(plan, { chainKey: "ethereum", chainExplicit: false, maxSpendWei: 200_000_000_000_000_000n, maxSpendEthText: "0.2", confirmation: phrase }),
+    /--chain is required/i
+  );
+  assert.throws(
+    () => buildBroadcastSafetyReadiness(plan, { chainKey: "ethereum", chainExplicit: true, confirmation: phrase }),
+    /--max-spend-eth is required/i
+  );
+  assert.throws(
+    () => buildBroadcastSafetyReadiness(plan, { chainKey: "ethereum", chainExplicit: true, maxSpendWei: 50_000_000_000_000_000n, maxSpendEthText: "0.05", confirmation: phrase }),
+    /exceeds --max-spend-eth cap/i
+  );
+  assert.throws(
+    () => buildBroadcastSafetyReadiness(plan, { chainKey: "ethereum", chainExplicit: true, maxSpendWei: 200_000_000_000_000_000n, maxSpendEthText: "0.2", confirmation: "BROADCAST" }),
+    /typed confirmation/i
+  );
+
+  const addressOnlyPlan = { ...plan, perWallet: [{ ...plan.perWallet[0], sourceKind: "address-env" as const }] };
+  assert.throws(
+    () => buildBroadcastSafetyReadiness(addressOnlyPlan, { chainKey: "ethereum", chainExplicit: true, maxSpendWei: 200_000_000_000_000_000n, maxSpendEthText: "0.2", confirmation: phrase }),
+    /private-key env wallets/i
+  );
+
+  const readiness = buildBroadcastSafetyReadiness(plan, {
+    chainKey: "ethereum",
+    chainExplicit: true,
+    maxSpendWei: 200_000_000_000_000_000n,
+    maxSpendEthText: "0.2",
+    confirmation: phrase,
+  });
+  assert.equal(readiness.broadcastPermitted, true);
+  assert.equal(readiness.spendCapWei, 200_000_000_000_000_000n);
+  assert.equal(readiness.confirmationPhrase, phrase);
+});
+
+test("assertFreshMintPlanUnchanged fails closed when on-chain stage is re-read differently", () => {
+  assert.doesNotThrow(() => assertFreshMintPlanUnchanged(mintPlan, { ...mintPlan }));
+  assert.throws(
+    () => assertFreshMintPlanUnchanged(mintPlan, { ...mintPlan, value: mintPlan.value + 1n }),
+    /changed before signing: value/i
+  );
+  assert.throws(
+    () => assertFreshMintPlanUnchanged(mintPlan, { ...mintPlan, feeRecipient: "0x0000000000000000000000000000000000000001" }),
+    /changed before signing: feeRecipient/i
+  );
 });
