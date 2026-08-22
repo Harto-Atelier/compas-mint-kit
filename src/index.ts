@@ -8,6 +8,7 @@ dotenv.config({ path: path.resolve(process.cwd(), ".env") });
 
 import { runWizard } from "./wizard";
 import { closePrompts } from "./prompt";
+import { parseCliArgs, runConfigPreviewFromFile } from "./run-config";
 
 const HELP = `
 NFT Public Mint Sniper
@@ -16,22 +17,31 @@ NFT Public Mint Sniper
   OpenSea account or access token is required.
 
 Usage
-  npm start              run the interactive wizard
-  npm start -- --help    show this message
+  npm start                                      run the interactive wizard
+  npm start -- --help                            show this message
+  npm run dev -- --config run.json --dry-run     print a no-secret preview execution plan
 
-Everything is asked interactively: keys, chain, quantity, NFT link, RPC,
-gas and timing. Optional defaults can be set in .env (see .env.example).
+Interactive mode asks for keys, chain, quantity, NFT link, RPC, gas and timing.
+Optional defaults can be set in .env (see .env.example).
+
+Config mode reads the no-secret run JSON produced by the webapp and is dry-run
+only for now: it validates the plan, prints costs/timing/warnings, and never
+loads private keys, signs transactions, or broadcasts.
 `;
 
 async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-  if (args.includes("--help") || args.includes("-h")) {
+  const args = parseCliArgs(process.argv.slice(2));
+  if (args.help) {
     console.log(HELP);
     return;
   }
 
   try {
-    await runWizard();
+    if (args.configPath) {
+      await runConfigPreviewFromFile(args.configPath, { dryRun: args.dryRun });
+    } else {
+      await runWizard();
+    }
     closePrompts();
     process.exit(0);
   } catch (err: any) {

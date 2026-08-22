@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "mode": "preview",
+  "collection": {
+    "name": "Example SeaDrop Collection",
+    "address": "0x1234567890abcdef1234567890abcdef12345678",
+    "chain": {
+      "key": "base",
+      "name": "Base",
+      "chainId": 8453,
+      "explorer": "https://basescan.org",
+      "nativeSymbol": "ETH"
+    },
+    "openseaUrl": "https://opensea.io/assets/base/0x1234567890abcdef1234567890abcdef12345678",
+    "explorerUrl": "https://basescan.org/address/0x1234567890abcdef1234567890abcdef12345678",
+    "source": "address"
+  },
+  "stages": [
+    {
+      "id": "team",
+      "label": "TEAM",
+      "source": "opensea-signed-preview",
+      "status": "upcoming",
+      "startTime": "2026-09-01T14:45:00.000Z",
+      "endTime": "2026-09-01T15:00:00.000Z",
+      "priceEth": "0.0200",
+      "maxPerWallet": 2,
+      "eligible": "needs-signature",
+      "summary": "Signed-stage schedule preview only; wallet-specific calldata is not stored in this file.",
+      "warnings": ["Requires signed calldata outside the no-secret webapp preview."]
+    },
+    {
+      "id": "public",
+      "label": "PUBLIC STAGE",
+      "source": "onchain-seadrop",
+      "status": "upcoming",
+      "startTime": "2026-09-01T15:00:00.000Z",
+      "endTime": "2026-09-02T15:00:00.000Z",
+      "priceEth": "0.0200",
+      "maxPerWallet": 3,
+      "eligible": "eligible",
+      "feeRecipient": "0x0000a26b00c1F0DF003000390027140000fAa719",
+      "calldataPreview": "0x1e7a6d5a000000000000000000000000",
+      "summary": "Public SeaDrop stage discovered on-chain; CLI config mode still prints only a dry-run plan.",
+      "warnings": []
+    }
+  ],
+  "quantities": [
+    { "stageId": "team", "quantity": 0 },
+    { "stageId": "gtd", "quantity": 0 },
+    { "stageId": "fcfs", "quantity": 0 },
+    { "stageId": "public", "quantity": 1 }
+  ],
+  "walletCount": 3,
+  "maxFeeGwei": 0.08,
+  "maxPriorityFeeGwei": 0.01,
+  "gasLimit": 250000,
+  "drainAddress": "0x000000000000000000000000000000000000dEaD",
+  "rpcUrls": ["https://mainnet.base.org"],
+  "notes": [
+    "This file intentionally contains no private keys, mnemonics, API keys, or access tokens.",
+    "Run: npm run dev -- --config examples/run-config.example.json --dry-run"
+  ]
+}
