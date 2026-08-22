@@ -2,7 +2,7 @@ import type { ScheduleResponse, StageKind } from "@/lib/mint-types";
 import type { EncryptedVaultWallet } from "@/lib/browser-vault";
 
 export type PlannerWalletChain = "ETH" | "Base";
-export type PlannerWalletSource = "demo" | "imported" | "vault";
+export type PlannerWalletSource = "imported" | "vault";
 export type PlannerSecretStatus = "none" | "discarded" | "encrypted" | "unlocked";
 export type LaunchVaultStatus = "active" | "archived" | "wiped";
 export type RotatePreviousVaultMode = "archive" | "delete";
@@ -71,44 +71,20 @@ export const DEFAULT_STAGE_QUANTITIES: Record<StageKind, number> = {
   public: 1,
 };
 
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const PRIVATE_KEY_LIKE_PART_RE = /^(?:0x)?[0-9a-fA-F]{64}$/;
 const RAW_TRANSACTION_LIKE_PART_RE = /^0x[0-9a-fA-F]{130,}$/;
-
-export const SEED_PLANNER_WALLETS: PlannerWalletRecord[] = [
-  {
-    id: "seed-eth-ops",
-    name: "Mint ops demo",
-    address: "0x7E57f9dC2B63aC108F0E47aE0D51f5130A8a12B4",
-    chain: "ETH",
-    balance: "0.42 ETH demo",
-    source: "demo",
-    secretStatus: "none",
-    createdAt: 1,
-  },
-  {
-    id: "seed-base-review",
-    name: "Base review demo",
-    address: "0xbA5E3f1D210F6F4318731D1dE7f4D91A8A9b00C0",
-    chain: "Base",
-    balance: "1.80 ETH demo",
-    source: "demo",
-    secretStatus: "none",
-    createdAt: 2,
-  },
-];
 
 export function createInitialPlannerState(createdAt = Date.now()): PlannerState {
   const launchId = `launch-${createdAt}`;
   const vaultId = `vault-${createdAt}`;
 
   return {
-    wallets: SEED_PLANNER_WALLETS,
-    walletCount: SEED_PLANNER_WALLETS.length,
+    wallets: [],
+    walletCount: 0,
     stageQuantities: DEFAULT_STAGE_QUANTITIES,
     scheduleReceipt: null,
     activeLaunchId: launchId,
-    launchVaults: [createLaunchVaultRecord({ launchId, vaultId, createdAt, walletCount: SEED_PLANNER_WALLETS.length })],
+    launchVaults: [createLaunchVaultRecord({ launchId, vaultId, createdAt, walletCount: 0 })],
   };
 }
 
@@ -204,26 +180,6 @@ export function countUnlockedVaultWallets(wallets: PlannerWalletRecord[]): numbe
 
 export function countVaultWallets(wallets: PlannerWalletRecord[]): number {
   return wallets.filter((wallet) => wallet.source === "vault").length;
-}
-
-export function createDemoWalletRecords(currentCount: number, createdAt = Date.now(), hexFactory: (bytes: number, salt: number) => string = randomHex): PlannerWalletRecord[] {
-  return [0, 1].map((offset) => {
-    const count = currentCount + offset;
-    const chain: PlannerWalletChain = count % 2 === 0 ? "ETH" : "Base";
-    const safeDemoBalance = chain === "ETH" ? "0.00 ETH demo" : "0.05 ETH demo";
-    const address = `0x${hexFactory(20, count)}`;
-
-    return {
-      id: `demo-${createdAt}-${count}`,
-      name: `Demo wallet ${count + 1}`,
-      address: isPlannerAddress(address) && address !== ZERO_ADDRESS ? address : fallbackDemoAddress(count),
-      chain,
-      balance: safeDemoBalance,
-      source: "demo",
-      secretStatus: "none",
-      createdAt: createdAt + offset,
-    };
-  });
 }
 
 export function rotatePlannerLaunch(
@@ -367,11 +323,6 @@ function randomHex(bytes: number) {
   }
 
   return Array.from({ length: bytes }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, "0")).join("");
-}
-
-function fallbackDemoAddress(count: number) {
-  const suffix = count.toString(16).padStart(40, "0").slice(-40);
-  return `0x${suffix}`;
 }
 
 function isSecretLikeImportPart(value: string) {

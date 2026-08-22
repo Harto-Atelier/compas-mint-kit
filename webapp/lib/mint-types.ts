@@ -4,7 +4,7 @@ export type StageStatus = "ended" | "live" | "upcoming" | "unknown";
 export type FinalProductChainKey = "ethereum" | "robinhood";
 export type RpcReadinessStatus = "unchecked" | "ready" | "blocked";
 export type ExecutionMode = "planner-only" | "encrypted-browser";
-export type ScheduleWalletSource = "demo" | "imported" | "vault";
+export type ScheduleWalletSource = "imported" | "vault";
 
 export interface ScheduleWallet {
   alias: string;

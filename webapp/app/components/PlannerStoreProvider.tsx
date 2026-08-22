@@ -5,7 +5,6 @@ import type { ScheduleResponse, StageKind } from "@/lib/mint-types";
 import { unlockEncryptedVaultWallet } from "@/lib/browser-vault";
 import {
   confirmWipeLaunchKeys,
-  createDemoWalletRecords,
   createImportedWalletRecords,
   createInitialPlannerState,
   createVaultWalletRecord,
@@ -30,7 +29,6 @@ type PlannerStoreValue = {
   activeLaunchId: string;
   activeLaunchVault: LaunchKeyVaultRecord;
   launchVaults: LaunchKeyVaultRecord[];
-  addDemoWallets: () => void;
   addImportedWallets: (drafts: PlannerWalletDraft[]) => number;
   addEncryptedVaultWallet: (draft: PlannerVaultWalletDraft) => PlannerWalletRecord;
   unlockVaultWallet: (walletId: string, passphrase: string) => Promise<PlannerWalletRecord>;
@@ -68,17 +66,6 @@ export function PlannerStoreProvider({ children }: { children: ReactNode }) {
       const currentState = stateSnapshot({ wallets, walletCount: nextWalletCount, launchVaults: currentVaults });
       return syncActiveLaunchVaultWalletCount(currentState, nextWalletCount).launchVaults;
     });
-  }
-
-  function addDemoWallets() {
-    setWallets((current) => {
-      const created = createDemoWalletRecords(current.length);
-      const next = [...created, ...current];
-      setWalletCountState(next.length);
-      updateLaunchVaultWalletCount(next.length);
-      return next;
-    });
-    clearScheduleReceipt();
   }
 
   function addImportedWallets(drafts: PlannerWalletDraft[]) {
@@ -163,7 +150,6 @@ export function PlannerStoreProvider({ children }: { children: ReactNode }) {
     activeLaunchId,
     activeLaunchVault,
     launchVaults,
-    addDemoWallets,
     addImportedWallets,
     addEncryptedVaultWallet,
     unlockVaultWallet,

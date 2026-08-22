@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  createDemoWalletRecords,
   createImportedWalletRecords,
   createInitialPlannerState,
   confirmWipeLaunchKeys,
@@ -56,12 +55,13 @@ test("wallet helpers clamp planner counts and mask addresses", () => {
   assert.equal(shortenWalletAddress("0x1111111111111111111111111111111111111111"), "0x1111…1111");
 });
 
-test("demo wallets produce public-address records only", () => {
-  const records = createDemoWalletRecords(2, 2000, () => "2".repeat(40));
-  assert.equal(records.length, 2);
-  assert.equal(records[0].source, "demo");
-  assert.equal(records[0].secretStatus, "none");
-  assert.match(records[0].address, /^0x[0-9a-f]{40}$/);
+test("initial planner state starts empty with no placeholder wallets", () => {
+  const state = createInitialPlannerState(1000);
+  assert.equal(state.wallets.length, 0);
+  assert.equal(state.walletCount, 0);
+  assert.equal(state.launchVaults.length, 1);
+  assert.equal(state.launchVaults[0].walletCount, 0);
+  assert.equal(JSON.stringify(state.wallets).includes("demo"), false);
 });
 
 test("rotation archives the previous launch and creates a new empty encrypted vault", () => {
@@ -83,7 +83,6 @@ test("rotation archives the previous launch and creates a new empty encrypted va
   assert.equal(rotated.launchVaults[1].rotatedFrom, state.activeLaunchId);
   assert.equal(rotated.launchVaults[1].walletCount, 0);
   assert.match(rotated.launchVaults[1].encryptedVault, /^encrypted-empty-vault:v1:/);
-  assert.equal(JSON.stringify(rotated.launchVaults).includes(state.wallets[0].address.slice(2)), false);
 });
 
 test("rotation can delete the previous launch vault instead of archiving", () => {

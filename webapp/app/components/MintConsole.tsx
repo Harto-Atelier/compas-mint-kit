@@ -109,6 +109,7 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
   const selectedTransactionCount = selectedStageCount * walletCount;
   const gasInputReady = Number.isFinite(maxFeeGwei) && maxFeeGwei > 0 && Number.isFinite(gasLimit) && gasLimit >= 21_000;
   const walletWarning = walletCount > MAX_RECOMMENDED_WALLETS;
+  const walletsMissing = walletCount === 0;
   const totals = useMemo(() => calculateTotals(activeStages, quantities, walletCount, maxFeeGwei, gasLimit), [
     activeStages,
     quantities,
@@ -119,7 +120,7 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
   const maxSpendReady = Number.isFinite(maxSpendEth) && maxSpendEth >= totals.grandTotalValue;
   const concurrencyReady = Number.isFinite(concurrency) && concurrency >= 1 && concurrency <= walletCount;
   const finalControlsBlocked = !maxSpendReady || !concurrencyReady || rpcStatus === "blocked";
-  const scheduleBlocked = selectedStageCount === 0 || walletWarning || !gasInputReady || finalControlsBlocked;
+  const scheduleBlocked = selectedStageCount === 0 || walletsMissing || walletWarning || !gasInputReady || finalControlsBlocked;
   const readinessItems = useMemo(
     () => buildReadinessItems(activeStages, selectedStages, walletCount, maxFeeGwei, gasLimit, walletWarning, gasInputReady, {
       targetChainKey,
@@ -600,13 +601,15 @@ function ScheduleControls({
   const scheduleLabel = scheduleLoading
     ? "Saving read-only preview…"
     : scheduleBlocked
-      ? walletWarning
-        ? `Reduce to ${MAX_RECOMMENDED_WALLETS} wallets or fewer`
-        : selectedStageCount === 0
-          ? "Select a stage quantity"
-          : !maxSpendReady || !concurrencyReady || finalProductControls.rpcStatus === "blocked"
-            ? "Fix final product controls"
-            : "Set a positive gas ceiling"
+      ? walletCapacity === 0
+        ? "Stage wallets in the Wallets tab first"
+        : walletWarning
+          ? `Reduce to ${MAX_RECOMMENDED_WALLETS} wallets or fewer`
+          : selectedStageCount === 0
+            ? "Select a stage quantity"
+            : !maxSpendReady || !concurrencyReady || finalProductControls.rpcStatus === "blocked"
+              ? "Fix final product controls"
+              : "Set a positive gas ceiling"
       : "Save read-only schedule";
 
   return (
@@ -884,8 +887,13 @@ function buildReadinessItems(
     },
     {
       label: "Wallet aliases",
-      detail: walletWarning ? `${walletCount} exceeds preview guardrail` : `${walletCount} alias(es) will be exported`,
-      state: walletWarning ? "blocked" : "ready",
+      detail:
+        walletCount === 0
+          ? "no wallets staged; import wallets first"
+          : walletWarning
+            ? `${walletCount} exceeds preview guardrail`
+            : `${walletCount} alias(es) will be exported`,
+      state: walletCount === 0 || walletWarning ? "blocked" : "ready",
     },
     {
       label: "Gas ceiling",

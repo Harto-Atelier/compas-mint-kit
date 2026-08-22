@@ -33,7 +33,6 @@ export default function WalletConsole({ embedded = false }: WalletConsoleProps) 
     activeLaunchId,
     activeLaunchVault,
     launchVaults,
-    addDemoWallets,
     addImportedWallets,
     addEncryptedVaultWallet,
     unlockVaultWallet,
@@ -202,7 +201,7 @@ export default function WalletConsole({ embedded = false }: WalletConsoleProps) 
               <div className="space-y-3">
                 <h1 className="text-4xl font-black tracking-tight text-slate-950 sm:text-5xl">Wallets</h1>
                 <p className="max-w-2xl text-sm font-semibold leading-6 text-slate-500 sm:text-base">
-                  Create demo wallets, review imported masked public addresses, and feed the Mints schedule count from one client-side planner store. Private keys are not accepted.
+                  Import public addresses or encrypted vault wallets, review masked entries, and feed the Mints schedule count from one client-side planner store. Private keys are not accepted in plain imports.
                 </p>
               </div>
             </div>
@@ -313,13 +312,6 @@ export default function WalletConsole({ embedded = false }: WalletConsoleProps) 
                 </label>
                 <button
                   type="button"
-                  onClick={addDemoWallets}
-                  className="h-11 rounded-full border border-violet-100 bg-white px-5 text-sm font-black text-violet-700 shadow-sm transition hover:border-violet-200"
-                >
-                  Create demo
-                </button>
-                <button
-                  type="button"
                   onClick={() => setImportOpen(true)}
                   className="h-11 rounded-full bg-violet-600 px-5 text-sm font-black text-white shadow-sm transition hover:bg-violet-500"
                 >
@@ -342,7 +334,7 @@ export default function WalletConsole({ embedded = false }: WalletConsoleProps) 
                     <div>
                       <p className="font-black text-slate-950">{wallet.name}</p>
                       <p className="mt-1 text-xs font-semibold text-slate-400">
-                        {wallet.source === "demo" ? "Generated demo" : wallet.source === "vault" ? `Encrypted vault · ${wallet.secretStatus}` : "Imported public address"}
+                        {wallet.source === "vault" ? `Encrypted vault · ${wallet.secretStatus}` : "Imported public address"}
                       </p>
                     </div>
                     <div className="font-mono text-xs font-semibold text-slate-600 sm:text-sm" title={shortenWalletAddress(wallet.address)}>
@@ -371,7 +363,11 @@ export default function WalletConsole({ embedded = false }: WalletConsoleProps) 
                 ))}
 
                 {visibleWallets.length === 0 ? (
-                  <div className="px-4 py-12 text-center text-sm font-semibold text-slate-400">No wallets match this search or chain filter.</div>
+                  <div className="px-4 py-12 text-center text-sm font-semibold text-slate-400">
+                    {wallets.length === 0
+                      ? "No wallets staged yet. Use Import to add public addresses or an encrypted vault wallet."
+                      : "No wallets match this search or chain filter."}
+                  </div>
                 ) : null}
               </div>
             </div>
@@ -381,7 +377,6 @@ export default function WalletConsole({ embedded = false }: WalletConsoleProps) 
             <p className="text-xs font-black uppercase tracking-[0.2em] text-amber-700">Safety first</p>
             <h2 className="mt-3 text-xl font-black text-slate-950">No custody. No saved secrets.</h2>
             <ul className="mt-4 space-y-3">
-              <li>• Demo wallets use random public addresses only.</li>
               <li>• Imports store address, label, and chain only.</li>
               <li>• Private-key-shaped text is rejected and cleared.</li>
               <li>• Mints reads this table for wallet wave counts.</li>
