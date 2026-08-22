@@ -4,19 +4,20 @@ import { useMemo, useState } from "react";
 import { AcoPanel, DispersePanel } from "@/app/components/DisperseAcoPanels";
 import MintConsole from "@/app/components/MintConsole";
 import RunReportViewer from "@/app/components/RunReportViewer";
+import LaunchVaultConsole from "@/app/LaunchVaultConsole";
 import WalletConsole from "@/app/WalletConsole";
 
-export type MainTab = "Mints" | "Wallets" | "Disperse" | "ACO" | "Reports";
+export type MainTab = "Mints" | "Wallets" | "Vault" | "Disperse" | "ACO" | "Reports";
 type SupportTab = "Staking" | "Subscription" | "FAQ" | "Support";
 
-const mainTabs: MainTab[] = ["Mints", "Wallets", "Disperse", "ACO", "Reports"];
+const mainTabs: MainTab[] = ["Mints", "Wallets", "Vault", "Disperse", "ACO", "Reports"];
 const supportTabs: SupportTab[] = ["Staking", "Subscription", "FAQ", "Support"];
 
 const activity = [
   "Report prepared for Compas Genesis",
   "Wallet health check completed",
-  "Disperse route drafted in simulation mode",
-  "No private keys are stored in this console",
+  "Encrypted vault stays local to this browser",
+  "No signing or broadcasting is wired in this console",
 ];
 
 const tabCopy: Record<MainTab, { eyebrow: string; title: string; body: string }> = {
@@ -29,6 +30,11 @@ const tabCopy: Record<MainTab, { eyebrow: string; title: string; body: string }>
     eyebrow: "Wallet desk",
     title: "Segment the 200-wallet demo fleet.",
     body: "Review warm, low-gas, and paused buckets without exposing seeds, private keys, or custodial controls.",
+  },
+  Vault: {
+    eyebrow: "Encrypted vault",
+    title: "Seal launch keys in the browser only.",
+    body: "Create a per-launch encrypted blob, unlock with a passphrase, and show derived wallet addresses without exposing private keys.",
   },
   Disperse: {
     eyebrow: "Funding prep",
@@ -124,8 +130,8 @@ function Sidebar({ active, setActive }: { active: MainTab; setActive: (tab: Main
         </div>
 
         <div className="mt-auto rounded-[1.5rem] border border-slate-200/80 bg-slate-50 p-4 text-xs font-semibold text-slate-500 dark:border-white/10 dark:bg-white/5 dark:text-slate-400">
-          <p className="font-black text-slate-900 dark:text-white">Read-only shell</p>
-          <p className="mt-1 leading-5">No private-key storage. No unattended signing. No live disperse execution.</p>
+          <p className="font-black text-slate-900 dark:text-white">Local-only shell</p>
+          <p className="mt-1 leading-5">Encrypted vault is browser-local. No plaintext key display, unattended signing, or live disperse execution.</p>
         </div>
       </div>
     </aside>
@@ -146,7 +152,7 @@ function ReportStrip() {
             {[
               ["3", "runs"],
               ["148", "warm"],
-              ["0", "keys held"],
+              ["0", "plaintext keys"],
             ].map(([value, label]) => (
               <div key={label} className="rounded-2xl bg-white/14 px-4 py-3 ring-1 ring-white/18 backdrop-blur">
                 <p className="text-xl font-black">{value}</p>
@@ -189,6 +195,10 @@ function MainPanel({ active }: { active: MainTab }) {
 
   if (active === "Wallets") {
     return <WalletConsole embedded />;
+  }
+
+  if (active === "Vault") {
+    return <LaunchVaultConsole embedded />;
   }
 
   if (active === "Disperse") {
