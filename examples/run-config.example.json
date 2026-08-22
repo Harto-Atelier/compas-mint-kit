@@ -54,8 +54,7 @@
   "maxFeeGwei": 0.08,
   "maxPriorityFeeGwei": 0.01,
   "gasLimit": 250000,
-  "drainAddress": "0x000000000000000000000000000000000000dEaD",
-  "rpcUrls": ["https://mainnet.base.org"],
+  "sweepDestinationLabel": "operator-wallet-alias",
   "notes": [
     "This file intentionally contains no private keys, mnemonics, API keys, or access tokens.",
     "Run: npm run dev -- --config examples/run-config.example.json --dry-run"
