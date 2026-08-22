@@ -147,6 +147,30 @@ For a local dry-run, run the wizard with the same values from the web planner,
 review the RPC/chain/gas/balance/SeaDrop checks and final summary, then answer
 `n` at `Fire?`. That exercises the local execution path without broadcasting.
 
+## Multi-wallet dry-run planner
+
+For operator planning, the CLI also has a non-interactive planner that takes
+wallet aliases/env-var names instead of raw keys. It builds the SeaDrop calldata
+from chain, estimates the max gas reservation per wallet, and prints the planned
+concurrency batches. It is **dry-run/no-broadcast only**; `--broadcast` is a
+reserved future flag that currently aborts safely.
+
+```bash
+HOT_WALLET=0xYourPlanningAddress \
+BACKUP_WALLET=0xYourBackupAddress \
+npm run dev -- plan \
+  --chain base \
+  --contract 0xYourNftContract \
+  --wallet hot=HOT_WALLET \
+  --wallet backup=BACKUP_WALLET \
+  --quantity 1 \
+  --concurrency 2
+```
+
+The env vars may contain public wallet addresses for planning. Raw private keys
+in command-line arguments are rejected so they do not leak into shell history or
+process listings.
+
 ## Step 4 — Set it and walk away
 
 If the drop opens later, choose **"Wait for the stage"**. It pre-signs everything,

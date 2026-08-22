@@ -9,6 +9,7 @@ dotenv.config({ path: path.resolve(process.cwd(), ".env") });
 import { runWizard } from "./wizard";
 import { closePrompts } from "./prompt";
 import { parseCliArgs, runConfigPreviewFromFile } from "./run-config";
+import { runMultiWalletPlanner } from "./multi-wallet-planner";
 
 const HELP = `
 NFT Public Mint Sniper
@@ -19,6 +20,8 @@ NFT Public Mint Sniper
 Usage
   npm start                                      run the interactive wizard
   npm start -- --help                            show this message
+  npm run dev -- plan --contract 0x... --wallet hot=HOT_KEY
+                                                 print a multi-wallet dry-run plan
   npm run dev -- --config run.json --dry-run     print a no-secret preview execution plan
 
 Interactive mode asks for keys, chain, quantity, NFT link, RPC, gas and timing.
@@ -30,7 +33,20 @@ loads private keys, signs transactions, or broadcasts.
 `;
 
 async function main(): Promise<void> {
-  const args = parseCliArgs(process.argv.slice(2));
+  const rawArgs = process.argv.slice(2);
+  if (rawArgs[0] === "plan") {
+    try {
+      await runMultiWalletPlanner(rawArgs.slice(1));
+      closePrompts();
+      process.exit(0);
+    } catch (err: any) {
+      closePrompts();
+      console.error(chalk.red(`\n❌ ${err.message}\n`));
+      process.exit(1);
+    }
+  }
+
+  const args = parseCliArgs(rawArgs);
   if (args.help) {
     console.log(HELP);
     return;
