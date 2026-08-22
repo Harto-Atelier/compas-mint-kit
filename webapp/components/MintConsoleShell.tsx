@@ -3,12 +3,13 @@
 import { useMemo, useState } from "react";
 import { AcoPanel, DispersePanel } from "@/app/components/DisperseAcoPanels";
 import MintConsole from "@/app/components/MintConsole";
+import RunReportViewer from "@/app/components/RunReportViewer";
 import WalletConsole from "@/app/WalletConsole";
 
-export type MainTab = "Mints" | "Wallets" | "Disperse" | "ACO";
+export type MainTab = "Mints" | "Wallets" | "Disperse" | "ACO" | "Reports";
 type SupportTab = "Staking" | "Subscription" | "FAQ" | "Support";
 
-const mainTabs: MainTab[] = ["Mints", "Wallets", "Disperse", "ACO"];
+const mainTabs: MainTab[] = ["Mints", "Wallets", "Disperse", "ACO", "Reports"];
 const supportTabs: SupportTab[] = ["Staking", "Subscription", "FAQ", "Support"];
 
 const activity = [
@@ -38,6 +39,11 @@ const tabCopy: Record<MainTab, { eyebrow: string; title: string; body: string }>
     eyebrow: "Access console",
     title: "Coordinate allowlists and collector ops.",
     body: "Keep the operator view focused on access, timing, and account status instead of noisy backend details.",
+  },
+  Reports: {
+    eyebrow: "CLI run report",
+    title: "Import real local results after the mint run.",
+    body: "Load a no-secret CLI report JSON and review minted totals, transaction status, tx hashes, receipts, and explorer links.",
   },
 };
 
@@ -187,6 +193,10 @@ function MainPanel({ active }: { active: MainTab }) {
 
   if (active === "Disperse") {
     return <DispersePanel embedded />;
+  }
+
+  if (active === "Reports") {
+    return <RunReportViewer embedded />;
   }
 
   return <AcoPanel embedded />;
