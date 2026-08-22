@@ -1,5 +1,5 @@
-import MintConsole from "./components/MintConsole";
+import MintConsoleShell from "@/components/MintConsoleShell";
 
 export default function Home() {
-  return <MintConsole />;
+  return <MintConsoleShell />;
 }
