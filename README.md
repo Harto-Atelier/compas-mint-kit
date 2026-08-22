@@ -22,6 +22,44 @@ Multi-wallet: paste as many keys as you like and they all fire in parallel.
 
 ---
 
+## New model — web planner, local executor
+
+This fork now separates planning from execution:
+
+1. **Web console planner** (`webapp/`) — a local Next.js console for discovering
+   a collection, reviewing public/team/GTD/FCFS stage data, pricing wallet waves,
+   and producing a reviewed run plan across **Ethereum, Base, and Robinhood
+   Chain**.
+2. **No keys in the browser** — the console is intentionally no-custody. It never
+   asks for private keys, never signs, and never broadcasts. Signed/allowlist
+   stages are preview-only because wallet-specific calldata still has to be
+   produced locally.
+3. **Export a run config** — the planner output should be treated as a portable
+   JSON run config: collection address, chain, selected stages, quantities,
+   wallet count, gas assumptions, fire time, optional drain address, and warnings.
+   It must not contain private keys, seed phrases, session cookies, or RPC secrets.
+4. **Local CLI dry-run first** — take the exported config to the CLI on your own
+   machine, load hot-wallet keys only in the terminal, and dry-run the plan there:
+   verify chain ID, RPC health, balances, gas ceiling, calldata, timing, and
+   per-wallet limits before any live path is considered.
+5. **Broadcast stays local** — the existing interactive CLI broadcasts only after
+   an explicit `Fire?` confirmation. Any future config-driven broadcast flow must
+   keep that boundary: signing and broadcasting happen from the local CLI only,
+   never from the web console.
+
+For the web planner:
+
+```bash
+cd webapp
+npm install
+npm run dev
+```
+
+Then open <http://localhost:3000>. For the local CLI path, use the root-level
+commands below.
+
+---
+
 ## Requirements
 
 - **Node.js 18 or newer** — check with `node --version`. Get it from
@@ -105,6 +143,9 @@ The wizard asks you seven things:
 | **7. Timing** | Wait for the stage to open, or fire now if it's already live. |
 
 Then it shows a summary and asks `Fire?`. **Nothing is sent until you type `y`.**
+For a local dry-run, run the wizard with the same values from the web planner,
+review the RPC/chain/gas/balance/SeaDrop checks and final summary, then answer
+`n` at `Fire?`. That exercises the local execution path without broadcasting.
 
 ## Step 4 — Set it and walk away
 

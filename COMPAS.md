@@ -17,6 +17,29 @@ Read the upstream [README](./README.md) for the full mechanics — nothing in th
 sniper itself has changed. This fork exists to bundle Compa-friendly defaults
 and documentation.
 
+## Web console + local execution model
+
+The mint kit now has two explicit lanes:
+
+- **Plan in the web console.** The Next.js app in [`webapp/`](./webapp) is an
+  operator planner for collection discovery, stage review, wallet-wave sizing,
+  gas assumptions, and schedule warnings. It supports the same chains as the CLI:
+  **Ethereum**, **Base**, and **Robinhood Chain**.
+- **Keep keys out of the browser.** The console is no-custody by design: no
+  private keys, seed phrases, wallet signatures, or transaction broadcasts in
+  browser state or API payloads.
+- **Export a run config.** Planner output is a handoff file for the local
+  executor: chain, collection address, selected stages, quantities, wallet count,
+  gas limit/max fee, fire time, optional drain address, and warnings. It is not a
+  wallet file and must not contain secrets.
+- **Dry-run locally.** Bring the run config to the root CLI, enter hot-wallet keys
+  only in the terminal, and run the local checks before committing to a mint. With
+  today's interactive CLI, the safe dry-run equivalent is to follow the wizard to
+  the final summary and answer `n` at `Fire?`.
+- **Broadcast remains local.** The web console should never grow a mainnet
+  broadcast button. Future config-driven broadcast support belongs in the local
+  CLI only, after an explicit operator confirmation.
+
 ## Which chains work
 
 The same three chains as upstream:
@@ -29,13 +52,13 @@ If you're a Compa holder and you already have an Alchemy key from the Compas
 utility surfaces (portfolio, terminal, dashboard), you can reuse the same key
 here — see [`.env.example`](./.env.example) for the variable names.
 
-## Compa "gating" — read this
+## Compa holder courtesy — read this
 
 **Holding a Compa is not enforced by this tool.** The code does not read your
 wallet, does not check ownership, does not phone home. Anyone can clone this
 fork and run it.
 
-Compa "gating" here is a **courtesy convention**, not a technical restriction:
+Compa-holder access here is a **courtesy convention**, not a technical restriction:
 
 - We surface this fork as a Compa-holder perk in the collector dashboard.
 - The upstream project is MIT-style open source and stays that way in the fork.
