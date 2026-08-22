@@ -5,9 +5,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_PREVIEW_WALLETS = 20;
+const MAX_REQUEST_BYTES = 64_000;
+const MAX_FEE_GWEI = 10_000;
 
 export async function POST(request: Request) {
   try {
+    const contentLength = Number(request.headers.get("content-length") || 0);
+    if (contentLength > MAX_REQUEST_BYTES) throw new Error("Schedule preview request is too large.");
     const body = (await request.json()) as Partial<ScheduleRequest>;
     const schedule = buildSchedule(body);
     return Response.json(schedule, { status: 201 });
@@ -25,16 +29,15 @@ function buildSchedule(body: Partial<ScheduleRequest>): ScheduleResponse {
   if (!body.stages || body.stages.length === 0) throw new Error("No mint stages supplied.");
   if (!body.quantities || body.quantities.length === 0) throw new Error("Select at least one stage quantity.");
 
-  const walletCount = clampInteger(body.walletCount ?? 0, 1, MAX_PREVIEW_WALLETS * 10, "wallet count");
-  const maxFeeGwei = finiteNumber(body.maxFeeGwei, "max fee");
+  const walletCount = clampInteger(body.walletCount ?? 0, 1, MAX_PREVIEW_WALLETS, "wallet count");
+  const maxFeeGwei = boundedNumber(body.maxFeeGwei, 0, MAX_FEE_GWEI, "max fee");
   const gasLimit = clampInteger(body.gasLimit ?? 0, 21_000, 2_000_000, "gas limit");
   const warnings: string[] = ["Preview schedule only: the webapp never signs or broadcasts transactions."];
 
   const drainAddress = cleanDrainAddress(body.drainAddress);
-  if (body.drainAddress && !drainAddress) throw new Error("Drain address must be a valid 0x address.");
-
-  if (walletCount > MAX_PREVIEW_WALLETS) {
-    warnings.push(`Wallet count ${walletCount} exceeds the ${MAX_PREVIEW_WALLETS}-wallet preview guardrail; split into smaller waves before using the CLI.`);
+  if (body.drainAddress && !drainAddress) throw new Error("Sweep destination must be a valid 0x address.");
+  if (drainAddress) {
+    warnings.push("Sweep destination is preview metadata only: this route cannot move, drain, or sweep funds.");
   }
 
   const selectedStages = body.quantities
@@ -70,7 +73,7 @@ function buildSchedule(body: Partial<ScheduleRequest>): ScheduleResponse {
 
   const mintEth = selectedStages.reduce((sum, selected) => {
     const stage = body.stages?.find((candidate) => candidate.id === selected.stageId);
-    return sum + Number(stage?.priceEth || 0) * selected.quantity * walletCount;
+    return sum + boundedNumber(stage?.priceEth || 0, 0, 10_000, stage?.label ?? "stage price") * selected.quantity * walletCount;
   }, 0);
   const gasCeilingEth = (gasLimit * maxFeeGwei * 1e-9) * walletCount * selectedStages.length;
   const fireAt = selectedStages
@@ -96,9 +99,9 @@ function buildSchedule(body: Partial<ScheduleRequest>): ScheduleResponse {
   };
 }
 
-function finiteNumber(value: unknown, label: string): number {
+function boundedNumber(value: unknown, min: number, max: number, label: string): number {
   const number = Number(value);
-  if (!Number.isFinite(number) || number < 0) throw new Error(`Invalid ${label}.`);
+  if (!Number.isFinite(number) || number < min || number > max) throw new Error(`Invalid ${label}; expected ${min}-${max}.`);
   return number;
 }
 

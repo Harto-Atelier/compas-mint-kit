@@ -31,7 +31,7 @@ export interface MintStage {
   endTime: string | null;
   priceEth: string;
   maxPerWallet: number | null;
-  eligible: "eligible" | "needs-signature" | "watch-only" | "ended" | "unavailable";
+  eligible: "checked" | "unknown" | "watch-only" | "ended" | "unavailable";
   summary: string;
   feeRecipient?: string;
   calldataPreview?: string;

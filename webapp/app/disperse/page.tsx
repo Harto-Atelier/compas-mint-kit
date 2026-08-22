@@ -1,5 +1,5 @@
-import MintConsole from "../mint-console";
+import MintConsoleShell from "@/components/MintConsoleShell";
 
 export default function DisperseAcoPage() {
-  return <MintConsole />;
+  return <MintConsoleShell initialTab="Disperse" />;
 }

@@ -58,6 +58,9 @@ const PUBLIC_RPCS: Record<string, string[]> = {
 export async function discoverMint(input: string, chainKey?: string): Promise<MintDiscoveryResponse> {
   const query = input.trim();
   if (!query) throw new Error("Enter an OpenSea slug, collection URL, item URL, or contract address.");
+  if (containsPrivateKeyLike(query)) {
+    throw new Error("Do not paste private keys into the mint discovery form. Enter a collection slug, OpenSea URL, or public contract address only.");
+  }
 
   const parsed = parseNftTarget(query);
   const preferredChain = resolveChain(parsed.chainHint ?? chainKey);
@@ -109,7 +112,7 @@ function parseNftTarget(rawInput: string): ParsedTarget {
     try {
       url = new URL(withProtocol);
     } catch {
-      throw new Error(`Could not parse "${rawInput}" as a URL.`);
+      throw new Error("Could not parse the OpenSea URL.");
     }
     const segments = url.pathname.split("/").map((segment) => segment.trim()).filter(Boolean);
     const itemIdx = segments.findIndex((segment) => segment === "assets" || segment === "item");
@@ -151,6 +154,10 @@ function normalizeChain(segment: string): string {
 
 function isHexAddress(value: string): boolean {
   return /^0x[0-9a-fA-F]{40}$/.test(value.trim());
+}
+
+function containsPrivateKeyLike(value: string): boolean {
+  return /(?:^|[\s,/?#=&._-])(?:0x)?[a-fA-F0-9]{64}(?=$|[\s,/?#=&._-])/.test(value);
 }
 
 async function resolveOpenSeaSlug(slug: string, preferredChainKey: string): Promise<{ collection: CollectionCard; warning?: string }> {
@@ -213,7 +220,7 @@ async function readErc721Metadata(address: string, chainKey: string): Promise<Rp
     ]);
     return { value: { name, symbol } };
   } catch (error) {
-    return { value: null, warning: `Could not read ERC721 metadata: ${messageOf(error)}` };
+    return { value: null, warning: `Could not read ERC721 metadata: ${safeMessageOf(error)}` };
   }
 }
 
@@ -255,7 +262,7 @@ async function fetchPublicDrop(address: string, chainKey: string): Promise<RpcRe
       },
     };
   } catch (error) {
-    return { value: null, warning: `SeaDrop public read failed: ${messageOf(error)}` };
+    return { value: null, warning: `SeaDrop public read failed: ${safeMessageOf(error)}` };
   }
 }
 
@@ -305,8 +312,8 @@ function buildStages(
       endTime: isoOrNull(publicRead.drop.endTime),
       priceEth: publicPrice,
       maxPerWallet: publicMax,
-      eligible: statusOf(publicRead.drop.startTime, publicRead.drop.endTime) === "ended" ? "ended" : "eligible",
-      summary: `On-chain SeaDrop public config read from ${chain.name}. Calldata preview uses quantity 1 and minterIfNotPayer=0x0.`,
+      eligible: statusOf(publicRead.drop.startTime, publicRead.drop.endTime) === "ended" ? "ended" : "checked",
+      summary: `On-chain SeaDrop public config read from ${chain.name}. Eligibility and stage timing were checked read-only; calldata remains a preview using quantity 1 and minterIfNotPayer=0x0.`,
       feeRecipient: publicRead.feeRecipient,
       calldataPreview: publicRead.calldata.slice(0, 34),
       warnings: publicRead.drop.restrictFeeRecipients ? ["Fee recipient is restricted; using the first allowed address read on-chain."] : [],
@@ -348,9 +355,9 @@ function signedStage(
     endTime: isoOrNull(end),
     priceEth,
     maxPerWallet,
-    eligible: statusOf(start, end) === "ended" ? "ended" : "needs-signature",
+    eligible: statusOf(start, end) === "ended" ? "ended" : "unknown",
     summary,
-    warnings: ["Preview only: signed/allowlist stages need wallet-specific calldata and are not broadcast by the webapp."],
+    warnings: ["Preview only: signed/allowlist eligibility is unknown until wallet-specific calldata or proofs are supplied outside the webapp."],
   };
 }
 
@@ -382,6 +389,9 @@ function shortAddress(address: string): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function safeMessageOf(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error))
+    .replace(/https?:\/\/[^\s"'`)]+/g, "[redacted-url]")
+    .replace(/\b(?:0x)?[a-fA-F0-9]{64}\b/g, "[redacted-hex]")
+    .replace(/\b[A-Za-z0-9_-]{40,}\b/g, "[redacted-token]");
 }

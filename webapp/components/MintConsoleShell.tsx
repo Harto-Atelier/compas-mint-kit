@@ -1,55 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { AcoPanel, DispersePanel } from "@/app/components/DisperseAcoPanels";
 import MintConsole from "@/app/components/MintConsole";
+import WalletConsole from "@/app/WalletConsole";
 
-type MainTab = "Mints" | "Wallets" | "Disperse" | "ACO";
+export type MainTab = "Mints" | "Wallets" | "Disperse" | "ACO";
 type SupportTab = "Staking" | "Subscription" | "FAQ" | "Support";
-
-type MintRow = {
-  collection: string;
-  network: string;
-  stage: string;
-  supply: string;
-  price: string;
-  status: "Ready" | "Watching" | "Draft";
-};
 
 const mainTabs: MainTab[] = ["Mints", "Wallets", "Disperse", "ACO"];
 const supportTabs: SupportTab[] = ["Staking", "Subscription", "FAQ", "Support"];
-
-const mintRows: MintRow[] = [
-  {
-    collection: "Compas Genesis",
-    network: "Ethereum",
-    stage: "Allowlist",
-    supply: "2,000",
-    price: "0.08 ETH",
-    status: "Ready",
-  },
-  {
-    collection: "Harto Relay Pass",
-    network: "Base",
-    stage: "Snapshot",
-    supply: "720",
-    price: "Free claim",
-    status: "Watching",
-  },
-  {
-    collection: "Atelier Proof",
-    network: "Ethereum",
-    stage: "Reserve",
-    supply: "300",
-    price: "Manual",
-    status: "Draft",
-  },
-];
-
-const walletBuckets = [
-  { label: "Warm", value: "148", detail: "ready to simulate" },
-  { label: "Needs gas", value: "32", detail: "below run target" },
-  { label: "Paused", value: "20", detail: "excluded from demo" },
-];
 
 const activity = [
   "Report prepared for Compas Genesis",
@@ -99,20 +59,6 @@ function BrandMark() {
       <span className="text-lg font-black tracking-[-0.18em]">C</span>
       <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-white/90" />
     </div>
-  );
-}
-
-function StatusPill({ status }: { status: MintRow["status"] }) {
-  const tone = {
-    Ready: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-400/10 dark:text-emerald-200 dark:ring-emerald-400/25",
-    Watching: "bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-400/10 dark:text-violet-200 dark:ring-violet-400/25",
-    Draft: "bg-slate-100 text-slate-600 ring-slate-200 dark:bg-white/5 dark:text-slate-300 dark:ring-white/10",
-  }[status];
-
-  return (
-    <span className={cx("rounded-full px-2.5 py-1 text-[11px] font-bold ring-1", tone)}>
-      {status}
-    </span>
   );
 }
 
@@ -208,117 +154,42 @@ function ReportStrip() {
   );
 }
 
-function AccountRow({ dark, setDark }: { dark: boolean; setDark: (value: boolean) => void }) {
+function AccountRow() {
   return (
-    <div className="flex flex-col gap-3 rounded-[1.75rem] border border-white/80 bg-white/82 p-3 shadow-sm backdrop-blur-xl dark:border-white/10 dark:bg-white/6 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-3 rounded-[1.75rem] border border-white/80 bg-white/82 p-3 shadow-sm backdrop-blur-xl sm:flex-row sm:items-center sm:justify-between">
       <div className="flex min-w-0 items-center gap-3">
-        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-slate-950 text-sm font-black text-white dark:bg-white dark:text-slate-950">HC</div>
+        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-slate-950 text-sm font-black text-white">HC</div>
         <div className="min-w-0">
-          <p className="truncate text-sm font-black text-slate-950 dark:text-white">Harto Console · 0x7A31…C9e4</p>
-          <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Demo workspace · no custody · Sepolia-safe UI state</p>
+          <p className="truncate text-sm font-black text-slate-950">Harto Console · 0x7A31…C9e4</p>
+          <p className="text-xs font-semibold text-slate-500">Demo workspace · no custody · Sepolia-safe UI state</p>
         </div>
       </div>
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-black text-slate-700 shadow-sm transition hover:border-violet-200 hover:text-violet-700 dark:border-white/10 dark:bg-white/8 dark:text-slate-200 dark:hover:text-white"
-        >
-          Account
-        </button>
-        <button
-          type="button"
-          aria-pressed={dark}
-          onClick={() => setDark(!dark)}
-          className="flex items-center gap-2 rounded-full bg-slate-950 px-4 py-2 text-xs font-black text-white shadow-sm transition hover:bg-violet-700 dark:bg-white dark:text-slate-950 dark:hover:bg-violet-100"
-        >
-          <span>{dark ? "☾" : "☀"}</span>
-          {dark ? "Dark" : "Light"}
-        </button>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-full border border-violet-100 bg-violet-50 px-4 py-2 text-xs font-black text-violet-700 shadow-sm">
+          Light console
+        </span>
+        <span className="rounded-full bg-slate-950 px-4 py-2 text-xs font-black text-white shadow-sm">
+          No private keys
+        </span>
       </div>
     </div>
   );
 }
 
 function MainPanel({ active }: { active: MainTab }) {
-  const copy = tabCopy[active];
-
   if (active === "Mints") {
     return <MintConsole embedded />;
   }
 
-  return (
-    <section className="rounded-[2rem] border border-white/80 bg-white/88 p-5 shadow-[0_24px_90px_rgba(77,63,132,0.12)] backdrop-blur-xl dark:border-white/10 dark:bg-[#171320]/88 dark:shadow-[0_24px_90px_rgba(0,0,0,0.35)] sm:p-6">
-      <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-        <div className="max-w-2xl">
-          <p className="text-xs font-black uppercase tracking-[0.2em] text-violet-600 dark:text-violet-300">{copy.eyebrow}</p>
-          <h2 className="mt-2 text-3xl font-black tracking-tight text-slate-950 dark:text-white sm:text-4xl">{copy.title}</h2>
-          <p className="mt-3 max-w-xl text-sm font-semibold leading-6 text-slate-500 dark:text-slate-400">{copy.body}</p>
-        </div>
-        <div className="grid min-w-full grid-cols-3 gap-2 rounded-[1.5rem] bg-slate-50 p-2 dark:bg-white/5 xl:min-w-[360px]">
-          {walletBuckets.map((bucket) => (
-            <div key={bucket.label} className="rounded-[1.15rem] bg-white p-3 shadow-sm dark:bg-white/8">
-              <p className="text-2xl font-black tracking-tight text-slate-950 dark:text-white">{bucket.value}</p>
-              <p className="mt-1 text-xs font-black text-slate-700 dark:text-slate-200">{bucket.label}</p>
-              <p className="mt-1 text-[11px] font-semibold leading-4 text-slate-400 dark:text-slate-500">{bucket.detail}</p>
-            </div>
-          ))}
-        </div>
-      </div>
+  if (active === "Wallets") {
+    return <WalletConsole embedded />;
+  }
 
-      <div className="mt-7 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-        <div className="overflow-hidden rounded-[1.5rem] border border-slate-200 bg-white dark:border-white/10 dark:bg-white/5">
-          <div className="grid grid-cols-[1.25fr_0.8fr_0.8fr_0.8fr_auto] gap-3 border-b border-slate-100 px-4 py-3 text-[11px] font-black uppercase tracking-[0.14em] text-slate-400 dark:border-white/10 dark:text-slate-500 max-md:hidden">
-            <span>Collection</span>
-            <span>Network</span>
-            <span>Stage</span>
-            <span>Price</span>
-            <span>Status</span>
-          </div>
-          <div className="divide-y divide-slate-100 dark:divide-white/10">
-            {mintRows.map((row) => (
-              <div key={row.collection} className="grid gap-3 px-4 py-4 md:grid-cols-[1.25fr_0.8fr_0.8fr_0.8fr_auto] md:items-center">
-                <div>
-                  <p className="font-black text-slate-950 dark:text-white">{row.collection}</p>
-                  <p className="text-xs font-semibold text-slate-400">Supply {row.supply}</p>
-                </div>
-                <p className="text-sm font-bold text-slate-600 dark:text-slate-300">{row.network}</p>
-                <p className="text-sm font-bold text-slate-600 dark:text-slate-300">{row.stage}</p>
-                <p className="text-sm font-black text-slate-950 dark:text-white">{row.price}</p>
-                <StatusPill status={row.status} />
-              </div>
-            ))}
-          </div>
-        </div>
+  if (active === "Disperse") {
+    return <DispersePanel embedded />;
+  }
 
-        <div className="rounded-[1.5rem] bg-slate-950 p-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] dark:bg-black/35">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-black uppercase tracking-[0.18em] text-violet-200">Run map</p>
-            <span className="rounded-full bg-white/10 px-3 py-1 text-[11px] font-black text-white/80">simulation</span>
-          </div>
-          <div className="mt-5 flex h-36 items-end gap-2 rounded-[1.15rem] bg-white/[0.06] p-3">
-            {[36, 54, 46, 78, 65, 92, 58, 82, 70, 96, 76, 88].map((height, index) => (
-              <div key={index} className="flex h-full flex-1 items-end">
-                <div
-                  className="w-full rounded-t-lg bg-gradient-to-t from-violet-700 to-fuchsia-300"
-                  style={{ height: `${height}%` }}
-                />
-              </div>
-            ))}
-          </div>
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <div className="rounded-2xl bg-white/8 p-3">
-              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-violet-200">Gas target</p>
-              <p className="mt-1 text-xl font-black">manual</p>
-            </div>
-            <div className="rounded-2xl bg-white/8 p-3">
-              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-violet-200">Signing</p>
-              <p className="mt-1 text-xl font-black">off</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
+  return <AcoPanel embedded />;
 }
 
 function SupportPanel({ active, setActive }: { active: SupportTab; setActive: (tab: SupportTab) => void }) {
@@ -365,22 +236,21 @@ function SupportPanel({ active, setActive }: { active: SupportTab; setActive: (t
   );
 }
 
-export default function MintConsoleShell() {
-  const [activeTab, setActiveTab] = useState<MainTab>("Mints");
+export default function MintConsoleShell({ initialTab = "Mints" }: { initialTab?: MainTab }) {
+  const [activeTab, setActiveTab] = useState<MainTab>(initialTab);
   const [supportTab, setSupportTab] = useState<SupportTab>("Staking");
-  const [dark, setDark] = useState(false);
 
   const tabSummary = useMemo(() => tabCopy[activeTab].title, [activeTab]);
 
   return (
-    <main className={cx(dark && "dark")}>
-      <div className="min-h-dvh bg-[radial-gradient(circle_at_top_left,#ede9fe_0,#f8fafc_36%,#ffffff_72%)] px-4 py-5 text-slate-950 transition-colors duration-300 dark:bg-[radial-gradient(circle_at_top_left,#26153f_0,#0f0b17_42%,#050309_100%)] dark:text-white sm:px-6 lg:px-8">
+    <main>
+      <div className="min-h-dvh bg-[radial-gradient(circle_at_top_left,#ede9fe_0,#f8fafc_36%,#ffffff_72%)] px-4 py-5 text-slate-950 transition-colors duration-300 sm:px-6 lg:px-8">
         <div className="mx-auto grid max-w-[1480px] gap-5 lg:grid-cols-[300px_minmax(0,1fr)]">
           <Sidebar active={activeTab} setActive={setActiveTab} />
           <div className="grid gap-5">
             <ReportStrip />
-            <AccountRow dark={dark} setDark={setDark} />
-            <div className="rounded-[1.5rem] border border-violet-200/70 bg-violet-50/75 px-4 py-3 text-sm font-bold text-violet-800 backdrop-blur dark:border-violet-400/15 dark:bg-violet-400/8 dark:text-violet-100">
+            <AccountRow />
+            <div className="rounded-[1.5rem] border border-violet-200/70 bg-violet-50/75 px-4 py-3 text-sm font-bold text-violet-800 backdrop-blur">
               Active module: <span className="font-black">{activeTab}</span> · {tabSummary}
             </div>
             <MainPanel active={activeTab} />
