@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import MintConsole from "@/app/components/MintConsole";
 
 type MainTab = "Mints" | "Wallets" | "Disperse" | "ACO";
 type SupportTab = "Staking" | "Subscription" | "FAQ" | "Support";
@@ -240,6 +241,10 @@ function AccountRow({ dark, setDark }: { dark: boolean; setDark: (value: boolean
 
 function MainPanel({ active }: { active: MainTab }) {
   const copy = tabCopy[active];
+
+  if (active === "Mints") {
+    return <MintConsole embedded />;
+  }
 
   return (
     <section className="rounded-[2rem] border border-white/80 bg-white/88 p-5 shadow-[0_24px_90px_rgba(77,63,132,0.12)] backdrop-blur-xl dark:border-white/10 dark:bg-[#171320]/88 dark:shadow-[0_24px_90px_rgba(0,0,0,0.35)] sm:p-6">
