@@ -72,9 +72,9 @@ function Sidebar({
   stagedWallets: number;
 }) {
   return (
-    <aside className="lg:sticky lg:top-6 lg:h-[calc(100dvh-3rem)]">
-      <div className="flex h-full flex-col rounded-[2rem] border border-white/75 bg-white/92 p-4 shadow-[0_24px_90px_rgba(77,63,132,0.14)] backdrop-blur-xl dark:border-white/10 dark:bg-[#15111f]/92 dark:shadow-[0_24px_90px_rgba(0,0,0,0.4)]">
-        <div className="flex items-center gap-3 border-b border-slate-200/70 pb-5 dark:border-white/10">
+    <aside className="min-w-0 max-w-full lg:sticky lg:top-6 lg:h-[calc(100dvh-3rem)]">
+      <div className="flex h-full min-w-0 max-w-full flex-col overflow-hidden rounded-[1.5rem] border border-white/75 bg-white/92 p-3 shadow-[0_18px_55px_rgba(77,63,132,0.12)] backdrop-blur-xl sm:rounded-[2rem] sm:p-4 sm:shadow-[0_24px_90px_rgba(77,63,132,0.14)] dark:border-white/10 dark:bg-[#15111f]/92 dark:shadow-[0_24px_90px_rgba(0,0,0,0.4)]">
+        <div className="flex items-center gap-3 border-b border-slate-200/70 pb-3 sm:pb-5 dark:border-white/10">
           <BrandMark />
           <div>
             <p className="text-sm font-black tracking-tight text-slate-950 dark:text-white">Compas Mint Kit</p>
@@ -82,38 +82,38 @@ function Sidebar({
           </div>
         </div>
 
-        <nav className="mt-5 grid gap-2" aria-label="Mint console sections">
+        <nav className="mt-3 grid min-w-0 grid-cols-2 gap-1.5 min-[360px]:grid-cols-3 sm:mt-5 sm:grid-cols-1 sm:gap-2" aria-label="Mint console sections">
           {mainTabs.map((tab) => (
             <button
               key={tab}
               type="button"
               onClick={() => setActive(tab)}
               className={cx(
-                "group flex items-center justify-between rounded-2xl px-4 py-3 text-left text-sm font-extrabold transition",
+                "group flex min-h-11 min-w-0 items-center justify-center rounded-xl px-2 py-2 text-center text-[11px] font-extrabold transition sm:justify-between sm:rounded-2xl sm:px-4 sm:py-3 sm:text-left sm:text-sm",
                 active === tab
                   ? "bg-violet-600 text-white shadow-[0_16px_36px_rgba(124,58,237,0.26)]"
                   : "text-slate-600 hover:bg-violet-50 hover:text-violet-700 dark:text-slate-300 dark:hover:bg-white/8 dark:hover:text-white",
               )}
             >
-              <span className="flex items-center gap-3">
+              <span className="flex min-w-0 items-center gap-1.5 sm:gap-3">
                 <span
                   className={cx(
-                    "h-2.5 w-2.5 rounded-full",
+                    "hidden h-2.5 w-2.5 rounded-full sm:block",
                     active === tab ? "bg-white" : "bg-violet-300 group-hover:bg-violet-500",
                   )}
                 />
-                {tab}
+                <span className="truncate">{tab}</span>
               </span>
-              <span className={cx("text-xs", active === tab ? "text-white/75" : "text-slate-400")}>⌘</span>
+              <span className={cx("hidden text-xs sm:inline", active === tab ? "text-white/75" : "text-slate-400")}>⌘</span>
             </button>
           ))}
         </nav>
 
-        <div className="mt-5 rounded-[1.5rem] border border-violet-100 bg-violet-50/70 p-4 dark:border-violet-400/15 dark:bg-violet-400/8">
+        <div className="mt-3 rounded-[1.25rem] border border-violet-100 bg-violet-50/70 p-3 sm:mt-5 sm:rounded-[1.5rem] sm:p-4 dark:border-violet-400/15 dark:bg-violet-400/8">
           <p className="text-xs font-black uppercase tracking-[0.18em] text-violet-700 dark:text-violet-200">Staged wallets</p>
           <div className="mt-3 flex items-end justify-between">
             <div>
-              <p className="text-3xl font-black tracking-tight text-slate-950 dark:text-white">{stagedWallets}</p>
+              <p className="text-2xl font-black tracking-tight text-slate-950 sm:text-3xl dark:text-white">{stagedWallets}</p>
               <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">in the planner store</p>
             </div>
           </div>
@@ -128,7 +128,7 @@ function Sidebar({
           ) : null}
         </div>
 
-        <div className="mt-auto rounded-[1.5rem] border border-slate-200/80 bg-slate-50 p-4 text-xs font-semibold text-slate-500 dark:border-white/10 dark:bg-white/5 dark:text-slate-400">
+        <div className="mt-3 hidden rounded-[1.5rem] border border-slate-200/80 bg-slate-50 p-4 text-xs font-semibold text-slate-500 sm:block lg:mt-auto dark:border-white/10 dark:bg-white/5 dark:text-slate-400">
           <p className="font-black text-slate-900 dark:text-white">Local-only shell</p>
           <p className="mt-1 leading-5">Encrypted vault is browser-local. No plaintext key display, unattended signing, or live disperse execution.</p>
           <a
@@ -155,19 +155,27 @@ function ReportStrip({
   unlockedVaultWallets: number;
 }) {
   return (
-    <section className="overflow-hidden rounded-[2rem] bg-gradient-to-r from-[#6d3df4] via-[#8b5cf6] to-[#d946ef] p-[1px] shadow-[0_22px_70px_rgba(124,58,237,0.24)]">
-      <div className="relative overflow-hidden rounded-[1.95rem] bg-violet-600 px-5 py-4 text-white sm:px-6">
+    <section className="min-w-0 max-w-full overflow-hidden rounded-[1.5rem] bg-gradient-to-r from-[#6d3df4] via-[#8b5cf6] to-[#d946ef] p-[1px] shadow-[0_18px_55px_rgba(124,58,237,0.20)] sm:rounded-[2rem] sm:shadow-[0_22px_70px_rgba(124,58,237,0.24)]">
+      <div className="relative min-w-0 max-w-full overflow-hidden rounded-[1.45rem] bg-violet-600 px-4 py-4 text-white sm:rounded-[1.95rem] sm:px-6">
         <div className="absolute -right-12 -top-16 h-36 w-36 rounded-full bg-white/20 blur-2xl" />
-        <div className="relative flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
+        <div className="relative flex min-w-0 max-w-full flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="min-w-0 max-w-full">
             <p className="text-xs font-black uppercase tracking-[0.22em] text-violet-100">Console state</p>
-            <h1 className="mt-1 text-2xl font-black tracking-tight sm:text-3xl">
-              {stagedWallets === 0 && savedSchedules === 0
-                ? "Nothing staged yet. Start with wallets or discovery."
-                : "Live planner state for this browser session."}
+            <h1 className="mt-1 max-w-full break-words text-2xl font-black tracking-tight [overflow-wrap:anywhere] sm:text-3xl">
+              {stagedWallets === 0 && savedSchedules === 0 ? (
+                <>
+                  <span className="sm:hidden">Nothing staged yet.</span>
+                  <span className="hidden sm:inline">Nothing staged yet. Start with wallets or discovery.</span>
+                </>
+              ) : (
+                <>
+                  <span className="sm:hidden">Planner state is live.</span>
+                  <span className="hidden sm:inline">Live planner state for this browser session.</span>
+                </>
+              )}
             </h1>
           </div>
-          <div className="grid grid-cols-3 gap-2 text-center sm:min-w-[390px]">
+          <div className="grid min-w-0 max-w-full grid-cols-1 gap-2 text-center min-[360px]:grid-cols-3 sm:min-w-[390px]">
             {[
               [String(stagedWallets), "wallets staged"],
               [String(savedSchedules), "saved schedules"],
@@ -238,11 +246,11 @@ export default function MintConsoleShell({ initialTab = "Mints" }: { initialTab?
   const savedSchedules = scheduleReceipt ? 1 : 0;
 
   return (
-    <main>
-      <div className="min-h-dvh bg-[radial-gradient(circle_at_top_left,#ede9fe_0,#f8fafc_36%,#ffffff_72%)] px-4 py-5 text-slate-950 transition-colors duration-300 sm:px-6 lg:px-8">
-        <div className="mx-auto grid max-w-[1480px] gap-5 lg:grid-cols-[300px_minmax(0,1fr)]">
+    <main className="overflow-x-hidden">
+      <div className="min-h-dvh bg-[radial-gradient(circle_at_top_left,#ede9fe_0,#f8fafc_36%,#ffffff_72%)] px-3 py-3 text-slate-950 transition-colors duration-300 sm:px-6 sm:py-5 lg:px-8">
+        <div className="mx-auto grid max-w-[1480px] min-w-0 gap-5 lg:grid-cols-[300px_minmax(0,1fr)]">
           <Sidebar active={activeTab} setActive={setActiveTab} stagedWallets={wallets.length} />
-          <div className="grid gap-5">
+          <div className="grid min-w-0 gap-5">
             <ReportStrip stagedWallets={wallets.length} savedSchedules={savedSchedules} unlockedVaultWallets={unlockedVaultWallets} />
             <StatusRow activeLaunchId={activeLaunchId} />
             <div className="rounded-[1.5rem] border border-violet-200/70 bg-violet-50/75 px-4 py-3 text-sm font-bold text-violet-800 backdrop-blur">
