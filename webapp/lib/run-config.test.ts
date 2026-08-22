@@ -86,6 +86,14 @@ test("buildRunConfigExport rejects forbidden secret/transaction fields", () => {
     () => buildRunConfigExport({ ...baseRequest, stages: [{ ...baseRequest.stages[0], calldataPreview: "0x1234" }] }),
     /Forbidden RunConfig field/,
   );
+  assert.throws(
+    () => buildRunConfigExport({ ...baseRequest, walletKey: "WALLET_KEY_ENV" }),
+    /Forbidden RunConfig field/,
+  );
+  assert.throws(
+    () => buildRunConfigExport({ ...baseRequest, notes: ["seed phrase should never be here"], seed: "test" }),
+    /Forbidden RunConfig field/,
+  );
 });
 
 test("buildRunConfigExport requires selected quantity, aliases, and spend/concurrency guardrails", () => {

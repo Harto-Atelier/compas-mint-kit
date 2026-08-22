@@ -3,8 +3,11 @@ import assert from "node:assert/strict";
 import {
   createDemoWalletRecords,
   createImportedWalletRecords,
+  createInitialPlannerState,
+  confirmWipeLaunchKeys,
   normalizeWalletCount,
   parseBulkWalletImport,
+  rotatePlannerLaunch,
   sanitizeStageQuantity,
   shortenWalletAddress,
 } from "./planner-store";
@@ -59,4 +62,62 @@ test("demo wallets produce public-address records only", () => {
   assert.equal(records[0].source, "demo");
   assert.equal(records[0].secretStatus, "none");
   assert.match(records[0].address, /^0x[0-9a-f]{40}$/);
+});
+
+test("rotation archives the previous launch and creates a new empty encrypted vault", () => {
+  const state = createInitialPlannerState(1000);
+  const rotated = rotatePlannerLaunch(state, {
+    createdAt: 2000,
+    launchId: "launch-next",
+    vaultId: "vault-next",
+    previousVaultMode: "archive",
+  });
+
+  assert.equal(rotated.activeLaunchId, "launch-next");
+  assert.equal(rotated.wallets.length, 0);
+  assert.equal(rotated.walletCount, 0);
+  assert.equal(rotated.launchVaults.length, 2);
+  assert.deepEqual(rotated.launchVaults.map((vault) => vault.status), ["archived", "active"]);
+  assert.equal(rotated.launchVaults[1].launchId, "launch-next");
+  assert.equal(rotated.launchVaults[1].vaultId, "vault-next");
+  assert.equal(rotated.launchVaults[1].rotatedFrom, state.activeLaunchId);
+  assert.equal(rotated.launchVaults[1].walletCount, 0);
+  assert.match(rotated.launchVaults[1].encryptedVault, /^encrypted-empty-vault:v1:/);
+  assert.equal(JSON.stringify(rotated.launchVaults).includes(state.wallets[0].address.slice(2)), false);
+});
+
+test("rotation can delete the previous launch vault instead of archiving", () => {
+  const state = createInitialPlannerState(1000);
+  const rotated = rotatePlannerLaunch(state, {
+    createdAt: 2000,
+    launchId: "launch-delete-mode",
+    vaultId: "vault-delete-mode",
+    previousVaultMode: "delete",
+  });
+
+  assert.equal(rotated.launchVaults.length, 1);
+  assert.equal(rotated.launchVaults[0].launchId, "launch-delete-mode");
+  assert.equal(rotated.launchVaults[0].rotatedFrom, state.activeLaunchId);
+});
+
+test("wipe requires exact confirmation and destroys archived launch key metadata", () => {
+  const state = rotatePlannerLaunch(createInitialPlannerState(1000), {
+    createdAt: 2000,
+    launchId: "launch-next",
+    vaultId: "vault-next",
+    previousVaultMode: "archive",
+  });
+  const oldLaunchId = state.launchVaults[0].launchId;
+
+  assert.throws(() => confirmWipeLaunchKeys(state, oldLaunchId, "wrong", 3000), /type the launch id/i);
+
+  const wiped = confirmWipeLaunchKeys(state, oldLaunchId, oldLaunchId, 3000);
+  const oldVault = wiped.launchVaults.find((vault) => vault.launchId === oldLaunchId);
+  assert.ok(oldVault);
+  assert.equal(oldVault.status, "wiped");
+  assert.equal(oldVault.walletCount, 0);
+  assert.equal(oldVault.wipedAt, 3000);
+  assert.match(oldVault.encryptedVault, /^wiped-vault:v1:/);
+  assert.equal(JSON.stringify(oldVault).includes("0x"), false);
+  assert.equal(wiped.activeLaunchId, "launch-next");
 });

@@ -74,7 +74,11 @@ provider secrets.
 
 Hosted/Vercel boundary: this planner is designed to run without secret env vars.
 Do not add private keys, signer material, RPC URLs/API keys, or wallet/session
-data to Vercel env, and never expose them through `NEXT_PUBLIC_*`.
+data to Vercel env, and never expose them through `NEXT_PUBLIC_*`. If encrypted
+browser-vault features are used locally, treat them as local-only convenience:
+a compromised hosted app can change client JavaScript and exfiltrate passphrases
+or decrypted keys, so funded launch keys still belong on an operator-controlled
+machine and the local CLI execution lane.
 
 ## APIs
 

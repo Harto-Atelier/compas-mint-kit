@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import BrowserBroadcastPanel from "@/app/components/BrowserBroadcastPanel";
 import { CHAINS } from "@/lib/chains";
 import { usePlannerStore } from "@/app/components/PlannerStoreProvider";
 import type {
@@ -12,7 +13,7 @@ import type {
   ScheduleResponse,
   StageKind,
 } from "@/lib/mint-types";
-import { createWalletAliases, buildLocalCliCommand, buildRunConfigFilename, type RunConfigExportError, type RunConfigExportResponse, type RunConfigStageInput } from "@/lib/run-config";
+import { createWalletAliases, buildLocalCliCommand, buildRunConfigFilename, containsBrowserExecutionSecret, type RunConfigExportError, type RunConfigExportResponse, type RunConfigStageInput } from "@/lib/run-config";
 
 const DEFAULT_QUERY = "base/collection/compas";
 const MAX_RECOMMENDED_WALLETS = 20;
@@ -140,12 +141,22 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
     [lastExportFilename, plannedFilename],
   );
   const finalProductControls = useMemo(
-    () => ({ targetChainKey, rpcStatus, maxSpendEth, concurrency }),
+    () => ({ targetChainKey, rpcStatus, maxSpendEth, concurrency, executionMode: "planner-only" as const }),
     [targetChainKey, rpcStatus, maxSpendEth, concurrency],
   );
 
   async function handleDiscover(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (containsBrowserExecutionSecret(query.trim())) {
+      setError("Do not paste private keys into the mint discovery form. Enter a collection slug, OpenSea URL, or public contract address only.");
+      setQuery("");
+      setDiscovery(null);
+      setExportStatus(null);
+      setLastExportFilename(null);
+      clearScheduleReceipt();
+      return;
+    }
+
     setLoading(true);
     setError(null);
     setExportStatus(null);
@@ -179,7 +190,7 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           collection: discovery.collection,
-          stages: discovery.stages,
+          stages: discovery.stages.map(toScheduleStageInput),
           quantities: discovery.stages.map((stage) => ({ stageId: stage.id, quantity: quantities[stage.id] ?? 0 })),
           walletCount,
           maxFeeGwei,
@@ -328,6 +339,7 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
                 scheduleLoading={scheduleLoading}
               />
               {schedule ? <ScheduleReceipt schedule={schedule} /> : null}
+              <BrowserBroadcastPanel collection={discovery.collection} stages={discovery.stages} quantities={quantities} walletCount={walletCount} />
             </section>
 
             <section className="grid gap-4 md:grid-cols-2">
@@ -360,11 +372,11 @@ function Hero() {
         </h1>
       </div>
       <div className="max-w-md rounded-3xl border border-violet-100 bg-violet-50/80 p-4 text-sm font-semibold leading-6 text-slate-600">
-        <span className="font-black text-violet-700">Safety mode:</span> browser plans only. Local CLI handles any later dry-run or send path.
+        <span className="font-black text-violet-700">Safety mode:</span> planning stays no-secret; browser signing only unlocks after vault passphrase, dry-run simulation, and an explicit broadcast modal.
         <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs font-black uppercase tracking-[0.14em] text-violet-700">
-          <span className="rounded-2xl border border-violet-100 bg-white/80 px-3 py-2">0 keys held</span>
-          <span className="rounded-2xl border border-violet-100 bg-white/80 px-3 py-2">No sign</span>
-          <span className="rounded-2xl border border-violet-100 bg-white/80 px-3 py-2">No tx</span>
+          <span className="rounded-2xl border border-violet-100 bg-white/80 px-3 py-2">Vault gated</span>
+          <span className="rounded-2xl border border-violet-100 bg-white/80 px-3 py-2">Sim first</span>
+          <span className="rounded-2xl border border-violet-100 bg-white/80 px-3 py-2">Modal send</span>
         </div>
       </div>
     </header>
@@ -978,6 +990,23 @@ function EligibilityPill({ value }: { value: MintStage["eligible"] }) {
   return <span className={`rounded-full border px-2.5 py-1 text-xs font-black ${tone[value]}`}>{eligibilityLabel(value)}</span>;
 }
 
+function toScheduleStageInput(stage: MintStage): Omit<MintStage, "calldataPreview"> {
+  return {
+    id: stage.id,
+    label: stage.label,
+    source: stage.source,
+    status: stage.status,
+    startTime: stage.startTime,
+    endTime: stage.endTime,
+    priceEth: stage.priceEth,
+    maxPerWallet: stage.maxPerWallet,
+    eligible: stage.eligible,
+    summary: stage.summary,
+    feeRecipient: stage.feeRecipient,
+    warnings: stage.warnings,
+  };
+}
+
 function toRunConfigStageInput(stage: MintStage): RunConfigStageInput {
   return {
     id: stage.id,
@@ -999,7 +1028,8 @@ function createPlannerWalletAliases(wallets: { name: string; id: string }[], wal
 }
 
 function sanitizeAlias(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9._:-]+/g, "-").replace(/^-+|-+$/g, "") || "wallet";
+  const alias = value.trim().toLowerCase().replace(/[^a-z0-9._:-]+/g, "-").replace(/^-+|-+$/g, "") || "wallet";
+  return containsBrowserExecutionSecret(value) || containsBrowserExecutionSecret(alias) ? "wallet" : alias;
 }
 
 function downloadJson(filename: string, json: string) {

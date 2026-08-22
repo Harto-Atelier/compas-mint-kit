@@ -3,12 +3,23 @@ export type StageSource = "onchain-seadrop" | "opensea-signed-preview" | "mock-p
 export type StageStatus = "ended" | "live" | "upcoming" | "unknown";
 export type FinalProductChainKey = "ethereum" | "robinhood";
 export type RpcReadinessStatus = "unchecked" | "ready" | "blocked";
+export type ExecutionMode = "planner-only" | "encrypted-browser";
+export type ScheduleWalletSource = "demo" | "imported" | "vault";
+
+export interface ScheduleWallet {
+  alias: string;
+  address: string;
+  source: ScheduleWalletSource;
+  encryptedVault: boolean;
+  unlockedForExecution: boolean;
+}
 
 export interface FinalProductControls {
   targetChainKey: FinalProductChainKey;
   rpcStatus: RpcReadinessStatus;
   maxSpendEth: number;
   concurrency: number;
+  executionMode: ExecutionMode;
 }
 
 export interface ChainOption {
@@ -67,11 +78,14 @@ export interface StageQuantity {
   quantity: number;
 }
 
+export type ScheduleStageInput = Omit<MintStage, "calldataPreview">;
+
 export interface ScheduleRequest {
   collection: CollectionCard;
-  stages: MintStage[];
+  stages: ScheduleStageInput[];
   quantities: StageQuantity[];
   walletCount: number;
+  wallets?: ScheduleWallet[];
   maxFeeGwei: number;
   gasLimit: number;
   drainAddress?: string;
@@ -85,6 +99,12 @@ export interface ScheduleResponse {
   canBroadcast: false;
   fireAt: string | null;
   walletsUsed: number;
+  walletSelection: {
+    aliases: string[];
+    addresses: string[];
+    unlockedVaultCount: number;
+    executionMode: ExecutionMode;
+  };
   selectedStages: {
     stageId: StageKind;
     label: string;

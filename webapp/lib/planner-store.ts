@@ -1,8 +1,23 @@
 import type { ScheduleResponse, StageKind } from "@/lib/mint-types";
+import type { EncryptedVaultWallet } from "@/lib/browser-vault";
 
 export type PlannerWalletChain = "ETH" | "Base";
-export type PlannerWalletSource = "demo" | "imported";
-export type PlannerSecretStatus = "none" | "discarded";
+export type PlannerWalletSource = "demo" | "imported" | "vault";
+export type PlannerSecretStatus = "none" | "discarded" | "encrypted" | "unlocked";
+export type LaunchVaultStatus = "active" | "archived" | "wiped";
+export type RotatePreviousVaultMode = "archive" | "delete";
+
+export type LaunchKeyVaultRecord = {
+  launchId: string;
+  vaultId: string;
+  createdAt: number;
+  rotatedFrom?: string;
+  status: LaunchVaultStatus;
+  walletCount: number;
+  encryptedVault: string;
+  archivedAt?: number;
+  wipedAt?: number;
+};
 
 export type PlannerWalletRecord = {
   id: string;
@@ -13,6 +28,7 @@ export type PlannerWalletRecord = {
   source: PlannerWalletSource;
   secretStatus: PlannerSecretStatus;
   createdAt: number;
+  encryptedVault?: EncryptedVaultWallet;
 };
 
 export type PlannerWalletDraft = {
@@ -21,11 +37,29 @@ export type PlannerWalletDraft = {
   chain: PlannerWalletChain;
 };
 
+export type PlannerVaultWalletDraft = {
+  name: string;
+  chain: PlannerWalletChain;
+  encryptedVault: EncryptedVaultWallet;
+};
+
+export type PlannerWalletSelectionMode = "planner-only" | "encrypted-browser";
+
+export type PlannerSelectedWallet = {
+  alias: string;
+  address: string;
+  source: PlannerWalletSource;
+  encryptedVault: boolean;
+  unlockedForExecution: boolean;
+};
+
 export type PlannerState = {
   wallets: PlannerWalletRecord[];
   walletCount: number;
   stageQuantities: Record<StageKind, number>;
   scheduleReceipt: ScheduleResponse | null;
+  activeLaunchId: string;
+  launchVaults: LaunchKeyVaultRecord[];
 };
 
 export const PLANNER_CHAINS: PlannerWalletChain[] = ["ETH", "Base"];
@@ -64,12 +98,17 @@ export const SEED_PLANNER_WALLETS: PlannerWalletRecord[] = [
   },
 ];
 
-export function createInitialPlannerState(): PlannerState {
+export function createInitialPlannerState(createdAt = Date.now()): PlannerState {
+  const launchId = `launch-${createdAt}`;
+  const vaultId = `vault-${createdAt}`;
+
   return {
     wallets: SEED_PLANNER_WALLETS,
     walletCount: SEED_PLANNER_WALLETS.length,
     stageQuantities: DEFAULT_STAGE_QUANTITIES,
     scheduleReceipt: null,
+    activeLaunchId: launchId,
+    launchVaults: [createLaunchVaultRecord({ launchId, vaultId, createdAt, walletCount: SEED_PLANNER_WALLETS.length })],
   };
 }
 
@@ -83,7 +122,8 @@ export function shortenWalletAddress(address: string) {
 }
 
 export function normalizeWalletCount(value: number, walletCapacity: number) {
-  const capacity = Math.max(1, Math.floor(walletCapacity));
+  const capacity = Math.max(0, Math.floor(walletCapacity));
+  if (capacity === 0) return 0;
   const count = Math.floor(Number(value));
   if (!Number.isFinite(count)) return 1;
   return Math.min(Math.max(count, 1), capacity);
@@ -132,6 +172,40 @@ export function createImportedWalletRecords(drafts: PlannerWalletDraft[], create
   }));
 }
 
+export function createVaultWalletRecord(draft: PlannerVaultWalletDraft, createdAt = Date.now()): PlannerWalletRecord {
+  if (!isPlannerAddress(draft.encryptedVault.address)) throw new Error("Encrypted vault wallet did not expose a valid public address.");
+  return {
+    id: `vault-${createdAt}-${draft.encryptedVault.address.slice(2, 8).toLowerCase()}`,
+    name: draft.name.trim() || "Encrypted vault wallet",
+    address: draft.encryptedVault.address,
+    chain: draft.chain,
+    balance: "Encrypted in browser",
+    source: "vault",
+    secretStatus: "encrypted",
+    encryptedVault: draft.encryptedVault,
+    createdAt,
+  };
+}
+
+export function selectPlannerWallets(wallets: PlannerWalletRecord[], count: number, mode: PlannerWalletSelectionMode): PlannerSelectedWallet[] {
+  const candidates = mode === "encrypted-browser" ? wallets.filter((wallet) => wallet.source === "vault" && wallet.secretStatus === "unlocked") : wallets;
+  return candidates.slice(0, Math.max(0, count)).map((wallet, index) => ({
+    alias: sanitizeWalletAlias(wallet.name || wallet.id || `wallet-${index + 1}`),
+    address: wallet.address,
+    source: wallet.source,
+    encryptedVault: wallet.source === "vault",
+    unlockedForExecution: wallet.source === "vault" && wallet.secretStatus === "unlocked",
+  }));
+}
+
+export function countUnlockedVaultWallets(wallets: PlannerWalletRecord[]): number {
+  return wallets.filter((wallet) => wallet.source === "vault" && wallet.secretStatus === "unlocked").length;
+}
+
+export function countVaultWallets(wallets: PlannerWalletRecord[]): number {
+  return wallets.filter((wallet) => wallet.source === "vault").length;
+}
+
 export function createDemoWalletRecords(currentCount: number, createdAt = Date.now(), hexFactory: (bytes: number, salt: number) => string = randomHex): PlannerWalletRecord[] {
   return [0, 1].map((offset) => {
     const count = currentCount + offset;
@@ -150,6 +224,138 @@ export function createDemoWalletRecords(currentCount: number, createdAt = Date.n
       createdAt: createdAt + offset,
     };
   });
+}
+
+export function rotatePlannerLaunch(
+  state: PlannerState,
+  {
+    createdAt = Date.now(),
+    launchId = `launch-${createdAt}-${randomHex(3)}`,
+    vaultId = `vault-${createdAt}-${randomHex(3)}`,
+    previousVaultMode = "archive",
+  }: {
+    createdAt?: number;
+    launchId?: string;
+    vaultId?: string;
+    previousVaultMode?: RotatePreviousVaultMode;
+  } = {},
+): PlannerState {
+  if (state.launchVaults.some((vault) => vault.launchId === launchId)) {
+    throw new Error(`Launch ${launchId} already exists.`);
+  }
+  if (state.launchVaults.some((vault) => vault.vaultId === vaultId)) {
+    throw new Error(`Vault ${vaultId} already exists.`);
+  }
+
+  const nextVault = createLaunchVaultRecord({
+    launchId,
+    vaultId,
+    createdAt,
+    rotatedFrom: state.activeLaunchId,
+    walletCount: 0,
+  });
+
+  const previousVaults = state.launchVaults
+    .map((vault) =>
+      vault.launchId === state.activeLaunchId
+        ? previousVaultMode === "archive"
+          ? { ...vault, status: "archived" as const, archivedAt: createdAt, walletCount: state.wallets.length }
+          : null
+        : vault,
+    )
+    .filter((vault): vault is LaunchKeyVaultRecord => vault !== null);
+
+  return {
+    ...state,
+    wallets: [],
+    walletCount: 0,
+    scheduleReceipt: null,
+    activeLaunchId: launchId,
+    launchVaults: [...previousVaults, nextVault],
+  };
+}
+
+export function confirmWipeLaunchKeys(state: PlannerState, launchId: string, confirmation: string, wipedAt = Date.now()): PlannerState {
+  if (confirmation.trim() !== launchId) {
+    throw new Error("To confirm wipe, type the launch id exactly.");
+  }
+  if (launchId === state.activeLaunchId) {
+    throw new Error("Rotate away from the active launch before wiping its keys.");
+  }
+
+  let found = false;
+  const launchVaults = state.launchVaults.map((vault) => {
+    if (vault.launchId !== launchId) return vault;
+    found = true;
+    if (vault.status !== "archived") {
+      throw new Error("Only archived launch vaults can be wiped.");
+    }
+
+    return {
+      launchId: vault.launchId,
+      vaultId: vault.vaultId,
+      createdAt: vault.createdAt,
+      rotatedFrom: vault.rotatedFrom,
+      status: "wiped" as const,
+      walletCount: 0,
+      encryptedVault: createWipedVaultEnvelope(vault.vaultId, wipedAt),
+      archivedAt: vault.archivedAt,
+      wipedAt,
+    } satisfies LaunchKeyVaultRecord;
+  });
+
+  if (!found) throw new Error(`Launch ${launchId} was not found.`);
+  return { ...state, launchVaults };
+}
+
+export function createLaunchVaultRecord({
+  launchId,
+  vaultId,
+  createdAt,
+  rotatedFrom,
+  walletCount,
+}: {
+  launchId: string;
+  vaultId: string;
+  createdAt: number;
+  rotatedFrom?: string;
+  walletCount: number;
+}): LaunchKeyVaultRecord {
+  return {
+    launchId,
+    vaultId,
+    createdAt,
+    rotatedFrom,
+    status: "active",
+    walletCount,
+    encryptedVault: createEmptyEncryptedVaultEnvelope(vaultId, createdAt),
+  };
+}
+
+export function syncActiveLaunchVaultWalletCount(state: PlannerState, walletCount: number): PlannerState {
+  return {
+    ...state,
+    launchVaults: state.launchVaults.map((vault) =>
+      vault.launchId === state.activeLaunchId && vault.status === "active" ? { ...vault, walletCount } : vault,
+    ),
+  };
+}
+
+function createEmptyEncryptedVaultEnvelope(vaultId: string, createdAt: number) {
+  return `encrypted-empty-vault:v1:${encodeVaultToken(vaultId)}:${createdAt}`;
+}
+
+function createWipedVaultEnvelope(vaultId: string, wipedAt: number) {
+  return `wiped-vault:v1:${encodeVaultToken(vaultId)}:${wipedAt}`;
+}
+
+function encodeVaultToken(value: string) {
+  return value.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+function sanitizeWalletAlias(value: string): string {
+  const alias = value.trim().toLowerCase().replace(/[^a-z0-9._:-]+/g, "-").replace(/^-+|-+$/g, "") || "wallet";
+  return PRIVATE_KEY_LIKE_PART_RE.test(alias) || RAW_TRANSACTION_LIKE_PART_RE.test(alias) ? "wallet" : alias;
 }
 
 function randomHex(bytes: number) {

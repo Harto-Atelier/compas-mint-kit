@@ -13,8 +13,13 @@ const FORBIDDEN_KEYS = new Set([
   "privateKey",
   "privateKeys",
   "secretKey",
+  "walletKey",
+  "walletKeys",
   "mnemonic",
+  "seed",
   "seedPhrase",
+  "secret",
+  "secrets",
   "signedTx",
   "signedTransaction",
   "signedTransactions",
@@ -25,9 +30,14 @@ const FORBIDDEN_KEYS = new Set([
   "rpcUrls",
   "providerUrl",
   "providerUrls",
+  "privateRpcUrl",
   "apiKey",
+  "apiKeys",
   "accessToken",
+  "authToken",
   "bearerToken",
+  "authorization",
+  "headers",
   "password",
   "cookie",
   "cookies",
@@ -36,7 +46,6 @@ const FORBIDDEN_KEYS = new Set([
   "calldataPreview",
   "signature",
   "signatures",
-  "apiKeys",
 ].map(normalizeForbiddenKey));
 const PRIVATE_KEY_LIKE_VALUE_RE = /(?:^|[\s,:'"=])(?:0x)?[a-fA-F0-9]{64}(?=$|[\s,:'"])/;
 const RAW_TRANSACTION_LIKE_VALUE_RE = /(?:^|[\s,:'"=])0x(?:02|01|f8|f9)[a-fA-F0-9]{80,}(?=$|[\s,:'"])/;
@@ -95,6 +104,7 @@ export const RUN_CONFIG_JSON_SCHEMA = {
       properties: {
         count: { type: "integer", minimum: 1, maximum: MAX_WALLET_COUNT },
         aliases: { type: "array", minItems: 1, maxItems: MAX_WALLET_COUNT, items: { type: "string", pattern: "^[a-zA-Z0-9._:-]+$" } },
+        addresses: { type: "array", maxItems: MAX_WALLET_COUNT, items: { type: "string", pattern: "^0x[0-9a-fA-F]{40}$" } },
       },
     },
     gas: {
@@ -291,6 +301,14 @@ export interface RunConfigExportResponse {
 export interface RunConfigExportError {
   ok: false;
   error: string;
+}
+
+export function assertNoBrowserExecutionSecrets(value: unknown): void {
+  assertNoForbiddenKeys(value);
+}
+
+export function containsBrowserExecutionSecret(value: string): boolean {
+  return PRIVATE_KEY_LIKE_VALUE_RE.test(value) || RAW_TRANSACTION_LIKE_VALUE_RE.test(value);
 }
 
 export function buildRunConfigExport(body: unknown, now = new Date()): RunConfigExportResponse {
