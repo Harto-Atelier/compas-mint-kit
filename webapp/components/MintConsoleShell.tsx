@@ -8,6 +8,7 @@ import LaunchVaultConsole from "@/app/LaunchVaultConsole";
 import WalletConsole from "@/app/WalletConsole";
 import { usePlannerStore } from "@/app/components/PlannerStoreProvider";
 import { countUnlockedVaultWallets } from "@/lib/planner-store";
+import CompasGate from "@/components/CompasGate";
 
 export type MainTab = "Mints" | "Wallets" | "Vault" | "Disperse" | "ACO" | "Reports";
 
@@ -246,6 +247,7 @@ export default function MintConsoleShell({ initialTab = "Mints" }: { initialTab?
   const savedSchedules = scheduleReceipt ? 1 : 0;
 
   return (
+    <CompasGate>
     <main className="overflow-x-hidden">
       <div className="min-h-dvh bg-[radial-gradient(circle_at_top_left,#ede9fe_0,#f8fafc_36%,#ffffff_72%)] px-3 py-3 text-slate-950 transition-colors duration-300 sm:px-6 sm:py-5 lg:px-8">
         <div className="mx-auto grid max-w-[1480px] min-w-0 gap-5 lg:grid-cols-[300px_minmax(0,1fr)]">
@@ -261,5 +263,6 @@ export default function MintConsoleShell({ initialTab = "Mints" }: { initialTab?
         </div>
       </div>
     </main>
+    </CompasGate>
   );
 }

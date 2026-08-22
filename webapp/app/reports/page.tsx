@@ -1,5 +1,10 @@
 import RunReportViewer from "@/app/components/RunReportViewer";
+import CompasGate from "@/components/CompasGate";
 
 export default function ReportsPage() {
-  return <RunReportViewer />;
+  return (
+    <CompasGate>
+      <RunReportViewer />
+    </CompasGate>
+  );
 }

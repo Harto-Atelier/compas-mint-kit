@@ -1,7 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
+
+import {
+  COMPAS_CONTRACT,
+  fetchCompasBalance,
+  isEthAddress,
+  writeGateSession,
+} from "@/lib/compas-gate";
 
 const featureCards = [
   {
@@ -46,33 +54,66 @@ function Brand() {
 }
 
 function LoginModal({ onClose }: { onClose: () => void }) {
+  const router = useRouter();
+  const [status, setStatus] = useState<"idle" | "connecting" | "checking">("idle");
+  const [error, setError] = useState<string | null>(null);
+
+  async function connectAndVerify() {
+    setError(null);
+    const ethereum = (window as unknown as { ethereum?: { request: (args: { method: string }) => Promise<unknown> } }).ethereum;
+    if (!ethereum) {
+      setError("No wallet detected. Open this page in a wallet browser or install MetaMask/Rabby.");
+      return;
+    }
+    try {
+      setStatus("connecting");
+      const accounts = (await ethereum.request({ method: "eth_requestAccounts" })) as string[];
+      const address = Array.isArray(accounts) ? accounts[0] : "";
+      if (!address || !isEthAddress(address)) {
+        setError("Wallet did not return a valid Ethereum address.");
+        setStatus("idle");
+        return;
+      }
+      setStatus("checking");
+      const compasCount = await fetchCompasBalance(address);
+      if (compasCount < 1) {
+        setError("This wallet holds no Compas. Connect a wallet that holds at least one Compas to enter.");
+        setStatus("idle");
+        return;
+      }
+      writeGateSession({ address, compasCount, verifiedAt: Date.now() });
+      router.push("/app");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Wallet connection failed.");
+      setStatus("idle");
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/20 px-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="login-title">
       <div className="w-full max-w-md rounded-[1.75rem] border border-neutral-200 bg-white p-5 shadow-2xl shadow-neutral-950/20">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-black uppercase tracking-[0.18em] text-[#635bff]">Operator login</p>
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-[#635bff]">Compas holder access</p>
             <h2 id="login-title" className="mt-1 text-2xl font-black text-neutral-950">Enter the mint console</h2>
             <p className="mt-2 text-sm font-medium leading-6 text-neutral-600">
-              This preview uses local browser state. No password leaves the browser; production auth can be wired later to your preferred provider.
+              Connect the wallet that holds your Compas. Ownership is checked onchain against the Compas contract; nothing is signed and no transaction is sent.
             </p>
           </div>
           <button type="button" onClick={onClose} className="rounded-full border border-neutral-200 px-3 py-1 text-sm font-black text-neutral-500 hover:bg-neutral-50">×</button>
         </div>
         <div className="mt-5 grid gap-3">
-          <label className="grid gap-2 text-xs font-black uppercase tracking-[0.16em] text-neutral-500">
-            Workspace
-            <input defaultValue="Harto / Compas" className="h-11 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 text-sm font-bold text-neutral-950 outline-none focus:border-[#635bff] focus:bg-white" />
-          </label>
-          <label className="grid gap-2 text-xs font-black uppercase tracking-[0.16em] text-neutral-500">
-            Access phrase
-            <input type="password" placeholder="Browser-local preview" className="h-11 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 text-sm font-bold text-neutral-950 outline-none focus:border-[#635bff] focus:bg-white" />
-          </label>
-          <Link href="/app" className="mt-2 inline-flex h-12 items-center justify-center rounded-2xl bg-[#635bff] px-5 text-sm font-black text-white shadow-lg shadow-[#635bff]/25 transition hover:bg-[#5148ee]">
-            Launch App →
-          </Link>
+          <button
+            type="button"
+            onClick={connectAndVerify}
+            disabled={status !== "idle"}
+            className="inline-flex h-12 items-center justify-center rounded-2xl bg-[#635bff] px-5 text-sm font-black text-white shadow-lg shadow-[#635bff]/25 transition hover:bg-[#5148ee] disabled:cursor-wait disabled:opacity-70"
+          >
+            {status === "connecting" ? "Connecting wallet…" : status === "checking" ? "Checking Compas onchain…" : "Connect wallet →"}
+          </button>
+          {error ? <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold leading-5 text-red-700">{error}</p> : null}
           <p className="text-xs font-semibold leading-5 text-neutral-500">
-            For funded launches, use burner wallets and rotate the encrypted vault per drop.
+            Gate contract: <span className="font-black text-neutral-700">{`${COMPAS_CONTRACT.slice(0, 6)}…${COMPAS_CONTRACT.slice(-4)}`}</span> (Compas, ETH mainnet). Read-only <code>balanceOf</code> check. Session lasts 24h in this browser.
           </p>
         </div>
       </div>
