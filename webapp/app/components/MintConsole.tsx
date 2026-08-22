@@ -91,7 +91,6 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
     maxFeeGwei,
     gasLimit,
   ]);
-
   async function handleDiscover(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
@@ -239,6 +238,7 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
                 exportLoading={exportLoading}
                 exportStatus={exportStatus}
                 gasLimit={gasLimit}
+                localCommand={localCommand}
                 maxFeeGwei={maxFeeGwei}
                 readinessItems={readinessItems}
                 scheduleBlocked={scheduleBlocked}
@@ -252,6 +252,7 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
                 onExportCopy={() => handleExport("copy")}
                 onExportDownload={() => handleExport("download")}
                 onGasLimit={setGasLimit}
+                onLocalCommandCopy={handleCopyLocalCommand}
                 onMaxFee={setMaxFeeGwei}
                 onSchedule={handleSchedule}
                 onWalletCount={setWalletCount}
@@ -397,6 +398,7 @@ function ScheduleControls({
   exportLoading,
   exportStatus,
   gasLimit,
+  localCommand,
   maxFeeGwei,
   readinessItems,
   scheduleBlocked,
@@ -410,6 +412,7 @@ function ScheduleControls({
   onExportCopy,
   onExportDownload,
   onGasLimit,
+  onLocalCommandCopy,
   onMaxFee,
   onSchedule,
   onWalletCount,

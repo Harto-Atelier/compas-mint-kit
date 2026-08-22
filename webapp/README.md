@@ -10,7 +10,7 @@ private key. This app is the browser-side planner for the root
   contract address.
 - Review stage cards for public, team, GTD, and FCFS-style mint phases.
 - Price wallet waves with quantity, wallet count, gas limit, max-fee, and
-  optional post-mint drain-address assumptions.
+  optional sweep-destination labels. The webapp never moves or sweeps funds.
 - Produce a preview schedule/run config that can be carried to the local CLI.
 - Support the current kit chains: **Ethereum**, **Base**, and **Robinhood Chain**.
 
@@ -40,7 +40,7 @@ Open <http://localhost:3000>.
 The web console is the planning lane; the CLI is the execution lane.
 
 1. Use the console to discover the collection and review supported stages.
-2. Set quantities, wallet count, gas limit, max fee, and optional drain address.
+2. Set quantities, wallet count, gas limit, max fee, and optional sweep destination label.
 3. Save/export the preview schedule as the run config handoff.
 4. Move that config to the root CLI on the same machine that owns the hot-wallet
    keys.
@@ -60,8 +60,8 @@ The run config should contain only planning data:
   "walletCount": 3,
   "gasLimit": 250000,
   "maxFeeGwei": 0.08,
-  "drainAddress": "0x...",
-  "warnings": []
+  "sweepDestinationLabel": "0x... optional preview metadata only",
+  "warnings": ["No sweep is executed by the webapp"]
 }
 ```
 
