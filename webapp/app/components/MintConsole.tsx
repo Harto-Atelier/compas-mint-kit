@@ -4,6 +4,7 @@ import { FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 import { CHAINS } from "@/lib/chains";
 import { usePlannerStore } from "@/app/components/PlannerStoreProvider";
 import type {
+  FinalProductControls,
   MintDiscoveryError,
   MintDiscoveryResponse,
   MintStage,
@@ -22,6 +23,20 @@ const STAGE_ACCENTS: Record<StageKind, string> = {
   fcfs: "from-fuchsia-50 to-violet-50 text-fuchsia-950 border-fuchsia-200/80",
   public: "from-emerald-50 to-lime-50 text-emerald-950 border-emerald-200/80",
 };
+
+const SOURCE_LABELS: Record<MintStage["source"], string> = {
+  "onchain-seadrop": "SeaDrop public",
+  "opensea-signed-preview": "OpenSea signed",
+  "mock-preview": "Preview fixture",
+};
+
+const COLLECTION_SOURCE_LABELS: Record<MintDiscoveryResponse["collection"]["source"], string> = {
+  opensea: "OpenSea metadata",
+  address: "Contract address",
+  fallback: "Manual fallback",
+};
+
+const LOCAL_COMMAND_PLACEHOLDER = "downloaded-run-config.json";
 
 const FIELD_CLASS =
   "h-12 rounded-2xl border border-violet-100 bg-white/90 px-4 text-slate-950 outline-none shadow-sm transition placeholder:text-slate-400 focus:border-violet-300 focus:ring-4 focus:ring-violet-100";
@@ -66,6 +81,7 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [exportLoading, setExportLoading] = useState<"copy" | "download" | null>(null);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
+  const [lastExportFilename, setLastExportFilename] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -91,11 +107,15 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
     maxFeeGwei,
     gasLimit,
   ]);
+  const localCommand = useMemo(() => buildLocalCommand(lastExportFilename), [lastExportFilename]);
+  const finalProductControls = useMemo(() => buildFinalProductControls(chain, walletCount, totals), [chain, walletCount, totals]);
+
   async function handleDiscover(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
     setError(null);
     setExportStatus(null);
+    setLastExportFilename(null);
     clearScheduleReceipt();
 
     try {
@@ -131,6 +151,7 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
           maxFeeGwei,
           gasLimit,
           drainAddress,
+          finalProduct: finalProductControls,
         }),
       });
       const body = (await response.json()) as ScheduleResponse | ScheduleError;
@@ -162,10 +183,12 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
           maxFeeGwei,
           gasLimit,
           drainAddress,
+          finalProduct: finalProductControls,
         }),
       });
       const body = (await response.json()) as RunConfigExportResponse | RunConfigExportError;
       if (!response.ok || !body.ok) throw new Error(body.ok ? "RunConfig export failed." : body.error);
+      setLastExportFilename(body.filename);
 
       const json = `${JSON.stringify(body.config, null, 2)}\n`;
       if (mode === "copy") {
@@ -180,6 +203,11 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
     } finally {
       setExportLoading(null);
     }
+  }
+
+  async function handleCopyLocalCommand() {
+    await navigator.clipboard.writeText(localCommand);
+    setExportStatus("Copied local dry-run command.");
   }
 
   return (
@@ -291,8 +319,12 @@ function Hero() {
         </h1>
       </div>
       <div className="max-w-md rounded-3xl border border-violet-100 bg-violet-50/80 p-4 text-sm font-semibold leading-6 text-slate-600">
-        <span className="font-black text-violet-700">Safety mode:</span> this webapp never asks for private keys, never signs,
-        and never broadcasts. It produces a reviewed schedule and no-secret RunConfig for the CLI path.
+        <span className="font-black text-violet-700">Safety mode:</span> browser plans only. Local CLI handles any later dry-run or send path.
+        <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs font-black uppercase tracking-[0.14em] text-violet-700">
+          <span className="rounded-2xl border border-violet-100 bg-white/80 px-3 py-2">0 keys held</span>
+          <span className="rounded-2xl border border-violet-100 bg-white/80 px-3 py-2">No sign</span>
+          <span className="rounded-2xl border border-violet-100 bg-white/80 px-3 py-2">No tx</span>
+        </div>
       </div>
     </header>
   );
@@ -314,7 +346,7 @@ function CollectionPanel({ discovery }: { discovery: MintDiscoveryResponse }) {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap gap-2">
             <Badge>{collection.chain.name}</Badge>
-            <Badge>{collection.source}</Badge>
+            <Badge>{COLLECTION_SOURCE_LABELS[collection.source]}</Badge>
           </div>
           <h2 className="mt-3 truncate text-3xl font-black text-slate-950">{collection.name}</h2>
           <p className="mt-2 break-all font-mono text-sm font-semibold text-slate-500">{collection.address}</p>
@@ -331,7 +363,12 @@ function CollectionPanel({ discovery }: { discovery: MintDiscoveryResponse }) {
       </div>
       {discovery.warnings.length > 0 ? (
         <div className="border-t border-amber-200 bg-amber-50 px-5 py-3 text-sm font-semibold text-amber-800">
-          {discovery.warnings[0]}
+          <p className="font-black uppercase tracking-[0.16em] text-amber-700">Review warnings</p>
+          <ul className="mt-2 space-y-1">
+            {discovery.warnings.map((warning) => (
+              <li key={warning}>⚠ {warning}</li>
+            ))}
+          </ul>
         </div>
       ) : null}
     </section>
@@ -357,7 +394,7 @@ function StageCard({
     <article className={`rounded-[2rem] border bg-gradient-to-br ${STAGE_ACCENTS[stage.id]} p-5 shadow-sm`}>
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-black uppercase tracking-[0.28em] opacity-60">{stage.source.replaceAll("-", " ")}</p>
+          <p className="text-xs font-black uppercase tracking-[0.28em] opacity-60">{SOURCE_LABELS[stage.source]}</p>
           <h3 className="mt-2 text-2xl font-black text-slate-950">{stage.label}</h3>
         </div>
         <span className={`rounded-full border px-3 py-1 text-xs font-black uppercase tracking-[0.16em] ${timing.accent}`}>
@@ -373,6 +410,7 @@ function StageCard({
       </div>
 
       <p className="mt-4 min-h-12 text-sm font-semibold leading-6 text-slate-600">{stage.summary}</p>
+      <StageLifecycle stage={stage} timing={timing} />
       {stage.feeRecipient ? <p className="mt-3 truncate font-mono text-xs font-semibold text-slate-500">Fee: {stage.feeRecipient}</p> : null}
       {stage.calldataPreview ? <p className="mt-1 font-mono text-xs font-semibold text-slate-500">Calldata preview: {stage.calldataPreview}…</p> : null}
 
@@ -388,8 +426,57 @@ function StageCard({
         />
       </label>
       {quantityWarning ? <p className="mt-2 text-xs font-bold text-amber-700">Exceeds max per wallet; preview cannot be treated as CLI-ready.</p> : null}
-      {stage.warnings[0] ? <p className="mt-3 text-xs font-semibold text-slate-500">⚠ {stage.warnings[0]}</p> : null}
+      {stage.warnings.length > 0 ? (
+        <ul className="mt-3 space-y-1 text-xs font-semibold text-slate-500">
+          {stage.warnings.map((warning) => (
+            <li key={warning}>⚠ {warning}</li>
+          ))}
+        </ul>
+      ) : null}
     </article>
+  );
+}
+
+function StageLifecycle({ stage, timing }: { stage: MintStage; timing: StageTiming }) {
+  const steps = [
+    {
+      label: "Queued",
+      detail: stage.startTime ? `Opens ${formatCompactDate(stage.startTime)}` : "Start unknown",
+      state: timing.status === "upcoming" || timing.status === "unknown" ? "active" : "done",
+    },
+    {
+      label: "Live",
+      detail: timing.status === "live" ? timing.primary : timing.status === "ended" ? "Window passed" : "Waiting for open",
+      state: timing.status === "live" ? "active" : timing.status === "ended" ? "done" : "pending",
+    },
+    {
+      label: "Close",
+      detail: stage.endTime ? `Ends ${formatCompactDate(stage.endTime)}` : "Manual close",
+      state: timing.status === "ended" ? "active" : "pending",
+    },
+  ] as const;
+
+  return (
+    <div className="mt-4 rounded-2xl border border-white/75 bg-white/60 p-3">
+      <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">Stage lifecycle</p>
+      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+        {steps.map((step) => (
+          <div
+            key={step.label}
+            className={`rounded-xl border px-3 py-2 ${
+              step.state === "active"
+                ? "border-violet-200 bg-violet-50 text-violet-800"
+                : step.state === "done"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  : "border-slate-200 bg-white/70 text-slate-500"
+            }`}
+          >
+            <p className="text-xs font-black uppercase tracking-[0.16em]">{step.label}</p>
+            <p className="mt-1 text-xs font-semibold leading-4">{step.detail}</p>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -422,6 +509,7 @@ function ScheduleControls({
   exportLoading: "copy" | "download" | null;
   exportStatus: string | null;
   gasLimit: number;
+  localCommand: string;
   maxFeeGwei: number;
   readinessItems: ReadinessItem[];
   scheduleBlocked: boolean;
@@ -435,6 +523,7 @@ function ScheduleControls({
   onExportCopy: () => void;
   onExportDownload: () => void;
   onGasLimit: (value: number) => void;
+  onLocalCommandCopy: () => void;
   onMaxFee: (value: number) => void;
   onSchedule: () => void;
   onWalletCount: (value: number) => void;
@@ -528,6 +617,22 @@ function ScheduleControls({
           >
             {exportLoading === "copy" ? "Copying…" : "Copy JSON"}
           </button>
+        </div>
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-950 p-3 text-white">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-violet-200">Local command</p>
+              <code className="mt-1 block break-all font-mono text-xs font-semibold text-slate-100">{localCommand}</code>
+            </div>
+            <button
+              type="button"
+              onClick={onLocalCommandCopy}
+              className="h-10 shrink-0 rounded-xl bg-white px-4 text-xs font-black text-slate-950 transition hover:bg-violet-100"
+            >
+              Copy command
+            </button>
+          </div>
+          <p className="mt-2 text-xs font-semibold text-slate-300">Run from the repo root after moving the exported JSON there. Dry-run only.</p>
         </div>
         {exportStatus ? <p className="mt-3 text-sm font-bold text-emerald-700">{exportStatus}</p> : null}
       </div>
@@ -677,10 +782,10 @@ function getStageTiming(stage: MintStage, now: number): StageTiming {
   if (ended) {
     return {
       status: "ended",
-      statusLabel: "ended",
+      statusLabel: "Closed",
       metricLabel: "Closed",
-      primary: "Ended",
-      secondary: "Stage window has passed or is marked ended.",
+      primary: "Closed",
+      secondary: "Stage window has passed or OpenSea marks it ended.",
       accent: "border-zinc-300 bg-zinc-100 text-zinc-600",
     };
   }
@@ -688,10 +793,10 @@ function getStageTiming(stage: MintStage, now: number): StageTiming {
   if (live) {
     return {
       status: "live",
-      statusLabel: "live",
+      statusLabel: "Open now",
       metricLabel: "Closes",
       primary,
-      secondary: "Stage is currently live in this preview.",
+      secondary: "Stage is open according to this preview.",
       accent: "border-emerald-300 bg-emerald-100 text-emerald-700",
     };
   }
@@ -699,7 +804,7 @@ function getStageTiming(stage: MintStage, now: number): StageTiming {
   if (stage.status === "upcoming" || start !== null) {
     return {
       status: "upcoming",
-      statusLabel: "upcoming",
+      statusLabel: "Queued",
       metricLabel: "Opens",
       primary,
       secondary: "Stage start is pending.",
@@ -709,7 +814,7 @@ function getStageTiming(stage: MintStage, now: number): StageTiming {
 
   return {
     status: "unknown",
-    statusLabel: "unknown",
+    statusLabel: "Check timing",
     metricLabel: "Timing",
     primary: "Unknown",
     secondary: "No reliable start or end time was found.",
@@ -786,6 +891,22 @@ function formatDuration(deltaMs: number, suffix: string) {
   return `${value} ${suffix}`;
 }
 
+function formatCompactDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "unknown";
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function buildLocalCommand(filename: string | null) {
+  const configName = filename ?? LOCAL_COMMAND_PLACEHOLDER;
+  return `npm run dev -- --config ${configName} --dry-run`;
+}
+
 function eligibilityLabel(value: MintStage["eligible"]) {
   const labels: Record<MintStage["eligible"], string> = {
     checked: "Checked",
@@ -811,6 +932,16 @@ function calculateTotals(
     mintEth: formatNumber(mintEth),
     gasCeilingEth: formatNumber(gasCeilingEth),
     grandTotalEth: formatNumber(mintEth + gasCeilingEth),
+  };
+}
+
+function buildFinalProductControls(chain: string, walletCount: number, totals: ReturnType<typeof calculateTotals>): FinalProductControls {
+  const estimatedTotal = Number(totals.grandTotalEth);
+  return {
+    targetChainKey: chain === "robinhood" ? "robinhood" : "ethereum",
+    rpcStatus: "unchecked",
+    maxSpendEth: Number.isFinite(estimatedTotal) ? Math.max(0.001, estimatedTotal + 0.001) : 0.001,
+    concurrency: Math.max(1, Math.min(walletCount, 4)),
   };
 }
 
