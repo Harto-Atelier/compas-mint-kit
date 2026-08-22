@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import { formatEther } from "ethers";
 import {
   LAUNCH_VAULT_STORAGE_KEY,
@@ -33,9 +33,8 @@ type BrowserBroadcastPanelProps = {
 };
 
 export default function BrowserBroadcastPanel({ collection, quantities, stages, walletCount }: BrowserBroadcastPanelProps) {
-  const unlockedVaultRef = useRef<LaunchVaultPayload | null>(null);
-  const [encryptedBackup, setEncryptedBackup] = useState<EncryptedLaunchVaultBackup | null>(null);
-  const [unlockedWalletCount, setUnlockedWalletCount] = useState(0);
+  const [vault, setVault] = useState<LaunchVaultPayload | null>(null);
+  const [encryptedBackup] = useState<EncryptedLaunchVaultBackup | null>(() => readStoredVaultBackup());
   const [unlockPassphrase, setUnlockPassphrase] = useState("");
   const [chainKey, setChainKey] = useState<BrowserBroadcastChainKey>(() => defaultChainKey(collection.chain.key));
   const [rpcUrl, setRpcUrl] = useState("");
