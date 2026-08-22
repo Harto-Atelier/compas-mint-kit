@@ -15,6 +15,9 @@ quantity, one max-cost cap**.
   wallet address.
 - Fund the canary wallet with only the amount you are willing to risk for the
   one-wallet test.
+- If the canary key is restored from an encrypted launch vault, export only that
+  one key; do not decrypt or export the full launch wallet set for a canary. See
+  [`launch-key-security.md`](./launch-key-security.md).
 
 ## Inputs to lock before running
 

@@ -253,6 +253,9 @@ code changes needed.
 - Provider errors are redacted before logging so raw signed transactions and
   64-hex key material are not printed to the terminal.
 - Use dedicated hot wallets funded with only what you intend to spend.
+- For launch wallets with real funds, follow the encrypted vault, Vercel risk,
+  rotation, backup/restore, and canary guidance in
+  [`docs/launch-key-security.md`](docs/launch-key-security.md).
 - Read [`src/local-mint.ts`](src/local-mint.ts) if you want to verify exactly what
   gets signed and sent — it's about 150 lines.
 
