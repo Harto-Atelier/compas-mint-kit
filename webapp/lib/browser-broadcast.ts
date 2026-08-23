@@ -99,8 +99,22 @@ export interface BrowserRunReport {
   source: "browser";
   collection: { address: string; name: string };
   chain: Pick<BrowserChainConfig, "key" | "name" | "chainId" | "explorer">;
+  gasStrategy?: BrowserGasStrategyPlan;
   summary: Record<BrowserMintStatus | "total", number>;
   transactions: BrowserRunReportTransaction[];
+}
+
+export interface BrowserGasStrategyInput {
+  maxFeeGwei: number;
+  priorityFeeGwei: number;
+  retryLimit: number;
+  escalationPercent: number;
+  nonceMode: "sequential" | "parallel";
+}
+
+export interface BrowserGasStrategyPlan extends BrowserGasStrategyInput {
+  attempts: { attempt: number; maxFeeGwei: string; priorityFeeGwei: string }[];
+  warnings: string[];
 }
 
 export interface BrowserRpcProviderLike {
@@ -283,6 +297,7 @@ export function buildBrowserRunReport(input: {
   collection: { address: string; name?: string | null };
   chain: BrowserChainConfig;
   transactions: BrowserPreparedMint[];
+  gasStrategy?: BrowserGasStrategyPlan;
   generatedAt?: string;
 }): BrowserRunReport {
   const summary: BrowserRunReport["summary"] = { total: input.transactions.length, prepared: 0, simulated: 0, broadcast: 0, failed: 0 };
@@ -310,9 +325,31 @@ export function buildBrowserRunReport(input: {
     source: "browser",
     collection: { address: input.collection.address, name: input.collection.name || "Browser mint run" },
     chain: { key: input.chain.key, name: input.chain.name, chainId: input.chain.chainId, explorer: input.chain.explorer },
+    gasStrategy: input.gasStrategy,
     summary,
     transactions,
   };
+}
+
+export function buildBrowserGasStrategy(input: BrowserGasStrategyInput): BrowserGasStrategyPlan {
+  const retryLimit = clampInteger(input.retryLimit, 0, 5);
+  const escalationPercent = clampNumber(input.escalationPercent, 0, 50);
+  const maxFeeGwei = clampNumber(input.maxFeeGwei, 0.001, 1_000);
+  const priorityFeeGwei = clampNumber(input.priorityFeeGwei, 0.001, maxFeeGwei);
+  const attempts = Array.from({ length: retryLimit + 1 }, (_, index) => {
+    const multiplier = 1 + (escalationPercent / 100) * index;
+    return {
+      attempt: index + 1,
+      maxFeeGwei: formatGwei(maxFeeGwei * multiplier),
+      priorityFeeGwei: formatGwei(Math.min(priorityFeeGwei * multiplier, maxFeeGwei * multiplier)),
+    };
+  });
+  const warnings: string[] = [];
+  if (input.nonceMode === "parallel") warnings.push("Parallel nonce mode can collide under RPC lag; use sequential for funded canaries.");
+  if (retryLimit > 3) warnings.push("More than 3 retries can overpay in volatile gas; confirm max spend before broadcast.");
+  if (priorityFeeGwei > maxFeeGwei * 0.8) warnings.push("Priority fee is close to max fee; leave base-fee headroom.");
+
+  return { ...input, maxFeeGwei, priorityFeeGwei, retryLimit, escalationPercent, attempts, warnings };
 }
 
 export function explorerTxUrl(chainKey: string, hash: string): string {
@@ -351,4 +388,17 @@ function safeMessageOf(error: unknown): string {
   return (error instanceof Error ? error.message : String(error))
     .replace(/https?:\/\/[^\s"'`)]+/g, "[redacted-url]")
     .replace(/\b(?:0x)?[a-fA-F0-9]{64}\b/g, "[redacted-hex]");
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
+}
+
+function clampInteger(value: number, min: number, max: number): number {
+  return Math.round(clampNumber(value, min, max));
+}
+
+function formatGwei(value: number): string {
+  return value.toFixed(value >= 1 ? 2 : 4).replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
 }

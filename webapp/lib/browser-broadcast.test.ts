@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildBrowserGasStrategy,
   buildBrowserMintPlan,
   buildBrowserRunReport,
   broadcastPreparedBrowserMint,
@@ -165,4 +166,21 @@ test("browser run report summarizes tx hashes, gas, failures, and strips private
   assert.equal(report.transactions[0].gasEstimate, "123456");
   assert.equal(JSON.stringify(report).includes(PRIVATE_KEY.slice(2)), false);
   assert.equal(report.transactions[1].error, "bad key [redacted-hex]");
+});
+
+
+test("browser gas strategy clamps attempts and warns on risky nonce/retry settings", () => {
+  const plan = buildBrowserGasStrategy({
+    maxFeeGwei: 0.08,
+    priorityFeeGwei: 0.02,
+    retryLimit: 4,
+    escalationPercent: 15,
+    nonceMode: "parallel",
+  });
+
+  assert.equal(plan.attempts.length, 5);
+  assert.deepEqual(plan.attempts[0], { attempt: 1, maxFeeGwei: "0.08", priorityFeeGwei: "0.02" });
+  assert.equal(plan.attempts[4].maxFeeGwei, "0.128");
+  assert.match(plan.warnings.join(" "), /Parallel nonce mode/i);
+  assert.match(plan.warnings.join(" "), /More than 3 retries/i);
 });

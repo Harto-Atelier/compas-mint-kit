@@ -13,6 +13,7 @@ import {
 import {
   broadcastPreparedBrowserMint,
   buildBrowserRunReport,
+  buildBrowserGasStrategy,
   browserChainConfig,
   buildBrowserMintPlan,
   simulatePreparedBrowserMint,
@@ -46,6 +47,11 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages, 
   const [error, setError] = useState<string | null>(null);
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   const [broadcastConsent, setBroadcastConsent] = useState(false);
+  const [maxFeeGwei, setMaxFeeGwei] = useState(0.08);
+  const [priorityFeeGwei, setPriorityFeeGwei] = useState(0.02);
+  const [retryLimit, setRetryLimit] = useState(2);
+  const [escalationPercent, setEscalationPercent] = useState(15);
+  const [nonceMode, setNonceMode] = useState<"sequential" | "parallel">("sequential");
 
   const selectedStages = useMemo<BrowserMintStageInput[]>(
     () =>
@@ -74,6 +80,7 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages, 
     };
   }, [vault]);
   const chain = useMemo(() => browserChainConfig({ chainKey, rpcUrl, seaDropAddress }), [chainKey, rpcUrl, seaDropAddress]);
+  const gasStrategy = useMemo(() => buildBrowserGasStrategy({ maxFeeGwei, priorityFeeGwei, retryLimit, escalationPercent, nonceMode }), [maxFeeGwei, priorityFeeGwei, retryLimit, escalationPercent, nonceMode]);
   const simulatedCount = transactions.filter((tx) => tx.status === "simulated").length;
   const broadcastCount = transactions.filter((tx) => tx.status === "broadcast").length;
   const failedCount = transactions.filter((tx) => tx.status === "failed").length;
@@ -178,6 +185,7 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages, 
       collection: { address: collection.address, name: collection.name },
       chain,
       transactions,
+      gasStrategy,
     });
     const json = `${JSON.stringify(report, null, 2)}\n`;
     const blob = new Blob([json], { type: "application/json" });
@@ -263,6 +271,24 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages, 
             <Metric label="Executable stages" value={executableStageCount} />
             <Metric label="Wallets requested" value={Math.min(walletCount, vault?.wallets.length ?? 0)} />
             <Metric label="Failures" value={failedCount} />
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">Gas / retry plan</p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-5">
+              <input aria-label="Max fee gwei" value={maxFeeGwei} onChange={(event) => setMaxFeeGwei(Number(event.target.value))} type="number" step="0.001" className={FIELD} />
+              <input aria-label="Priority fee gwei" value={priorityFeeGwei} onChange={(event) => setPriorityFeeGwei(Number(event.target.value))} type="number" step="0.001" className={FIELD} />
+              <input aria-label="Retry limit" value={retryLimit} onChange={(event) => setRetryLimit(Number(event.target.value))} type="number" className={FIELD} />
+              <input aria-label="Escalation percent" value={escalationPercent} onChange={(event) => setEscalationPercent(Number(event.target.value))} type="number" className={FIELD} />
+              <select aria-label="Nonce mode" value={nonceMode} onChange={(event) => setNonceMode(event.target.value as "sequential" | "parallel")} className={FIELD}>
+                <option value="sequential">sequential nonce</option>
+                <option value="parallel">parallel nonce</option>
+              </select>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs font-black text-slate-600">
+              {gasStrategy.attempts.map((attempt) => <span key={attempt.attempt} className="rounded-full border border-slate-200 bg-white px-3 py-1">#{attempt.attempt} max {attempt.maxFeeGwei} / prio {attempt.priorityFeeGwei} gwei</span>)}
+            </div>
+            {gasStrategy.warnings.length ? <ul className="mt-2 space-y-1 text-xs font-bold text-amber-700">{gasStrategy.warnings.map((warning) => <li key={warning}>⚠ {warning}</li>)}</ul> : null}
           </div>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-3">

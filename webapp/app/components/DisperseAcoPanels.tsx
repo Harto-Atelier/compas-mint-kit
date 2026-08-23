@@ -70,6 +70,10 @@ export function DispersePanel({ embedded = false }: { embedded?: boolean }) {
         .filter((line) => isPlannerAddress(line)),
     [recipientsRaw],
   );
+  const invalidRecipientCount = useMemo(() => recipientsRaw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).filter((line) => !isPlannerAddress(line)).length, [recipientsRaw]);
+  const duplicateRecipientCount = useMemo(() => recipients.length - new Set(recipients.map((address) => address.toLowerCase())).size, [recipients]);
+  const numericAmount = Number(amountPerWallet) || 0;
+  const totalAmount = recipients.length * numericAmount;
 
   function updateRecipients(raw: string) {
     if (PRIVATE_KEY_LIKE_RE.test(raw)) {
@@ -82,6 +86,34 @@ export function DispersePanel({ embedded = false }: { embedded?: boolean }) {
   }
 
   const amountLabel = `${amountPerWallet || "0"} ${assetType === "NFT" ? "NFT" : currency}`;
+
+  function downloadDisperseDraft() {
+    const payload = {
+      schemaVersion: "disperse-draft.v1",
+      generatedAt: new Date().toISOString(),
+      mode: "preview-only-no-broadcast",
+      assetType,
+      currency,
+      amountPerWallet: amountPerWallet || "0",
+      totalAmount: totalAmount.toString(),
+      recipients,
+      senders: wallets.map((wallet) => ({ name: wallet.name, address: wallet.address, chain: wallet.chain })),
+      guardrails: {
+        invalidRecipientCount,
+        duplicateRecipientCount,
+        secretScan: "private-key-shaped text is cleared before export",
+      },
+    };
+    const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `disperse-draft-${Date.now()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
 
   return (
     <section className={cx(PANEL_CLASS, embedded && "shadow-none")}>
@@ -118,21 +150,31 @@ export function DispersePanel({ embedded = false }: { embedded?: boolean }) {
             <div className={MINI_CARD_CLASS}>
               <span className={LABEL_CLASS}>Plan summary</span>
               <p className="mt-2 rounded-2xl border border-violet-100 bg-violet-50/60 px-4 py-3 text-sm font-black text-slate-950">
-                {recipients.length} recipient{recipients.length === 1 ? "" : "s"} × {amountLabel}
+                {recipients.length} recipient{recipients.length === 1 ? "" : "s"} × {amountLabel} · total {totalAmount || 0} {assetType === "NFT" ? "NFT" : currency}
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            disabled
-            className="w-full cursor-not-allowed rounded-2xl border border-violet-100 bg-slate-100 px-5 py-4 text-sm font-black uppercase tracking-[0.22em] text-slate-400"
-          >
-            Disperse disabled · no broadcast wired
-          </button>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={downloadDisperseDraft}
+              disabled={recipients.length === 0 || invalidRecipientCount > 0 || duplicateRecipientCount > 0 || numericAmount <= 0}
+              className="rounded-2xl border border-emerald-200 bg-white px-5 py-4 text-sm font-black uppercase tracking-[0.18em] text-emerald-700 shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Download draft report
+            </button>
+            <button
+              type="button"
+              disabled
+              className="cursor-not-allowed rounded-2xl border border-violet-100 bg-slate-100 px-5 py-4 text-sm font-black uppercase tracking-[0.18em] text-slate-400"
+            >
+              Broadcast disabled
+            </button>
+          </div>
           <p className="text-xs font-semibold leading-5 text-slate-500">
-            Execution is intentionally not wired in this console. Use the exported run config with your local CLI to fund
-            wallets from an operator machine.
+            Draft export is safe/no-secret. Execution remains disabled until a funded canary is explicitly approved.
           </p>
+          {(invalidRecipientCount > 0 || duplicateRecipientCount > 0) ? <p className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">{invalidRecipientCount} invalid · {duplicateRecipientCount} duplicate recipient(s). Fix before export.</p> : null}
         </div>
         <div className="grid gap-4 md:grid-cols-2">
           <div className={MINI_CARD_CLASS}>
