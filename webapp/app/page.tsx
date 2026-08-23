@@ -143,7 +143,7 @@ function Art({ kind }: { kind: string }) {
     return <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm"><div className="flex gap-1 border-b border-neutral-200 bg-neutral-50 p-3"><span className="h-2.5 w-2.5 rounded-full bg-red-400"/><span className="h-2.5 w-2.5 rounded-full bg-amber-400"/><span className="h-2.5 w-2.5 rounded-full bg-emerald-400"/></div><div className="p-4"><div className="h-8 rounded-xl border border-neutral-200 bg-neutral-50"/><div className="mt-3 h-3 w-32 rounded bg-[#635bff]/20"/></div></div>;
   }
   if (kind === "launchpad") {
-    return <div className="grid gap-2">{["OpenSea", "SeaDrop", "Allowlist", "Public"].map((x) => <div key={x} className="flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm font-black text-neutral-700"><span className="h-2 w-2 rounded-full bg-[#635bff]" />{x}</div>)}</div>;
+    return <div className="grid gap-1.5">{["OpenSea", "SeaDrop", "Allowlist"].map((x) => <div key={x} className="flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-sm font-black text-neutral-700"><span className="h-2 w-2 rounded-full bg-[#635bff]" />{x}</div>)}</div>;
   }
   if (kind === "vault") {
     return <div className="grid h-28 place-items-center rounded-3xl border border-neutral-200 bg-gradient-to-br from-neutral-50 to-violet-50"><div className="grid h-16 w-16 place-items-center rounded-2xl bg-[#635bff] text-2xl text-white shadow-lg">⌁</div></div>;
@@ -151,7 +151,7 @@ function Art({ kind }: { kind: string }) {
   if (kind === "speed") {
     return <div className="space-y-1.5 pt-3">{[96, 82, 76, 68, 55, 48, 36].map((w, i) => <div key={w} className="h-1.5 rounded-full bg-gradient-to-r from-[#635bff] to-orange-300" style={{ width: `${w}%`, opacity: 1 - i * 0.07 }} />)}</div>;
   }
-  return <div className="mx-auto w-36 rotate-[-3deg] rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm"><div className="grid gap-2 text-sm font-black text-neutral-700"><span>🌿 Mints <b className="float-right text-xs">3</b></span><span>▣ Wallets <b className="float-right text-xs">34</b></span><span>⇄ Disperse</span><span>◇ Reports</span></div></div>;
+  return <div className="mx-auto w-36 rotate-[-3deg] rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm"><div className="grid gap-2 text-sm font-black text-neutral-700"><span>🌿 Mints</span><span>▣ Wallets</span><span>⇄ Disperse</span><span>◇ Reports</span></div></div>;
 }
 
 export default function LandingPage() {
