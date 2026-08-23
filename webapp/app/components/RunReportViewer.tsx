@@ -46,6 +46,18 @@ export default function RunReportViewer({ embedded = false }: { embedded?: boole
     event.target.value = "";
   }
 
+  function exportTransactionsCsv() {
+    if (!report) return;
+    const header = ["walletAlias", "walletAddress", "stageId", "stageLabel", "quantity", "status", "txHash", "blockNumber", "gasUsed", "error"];
+    const rows = report.transactions.map((row) => [row.walletAlias, row.walletAddress ?? "", row.stageId, row.stageLabel, row.quantity, row.status, row.txHash ?? "", row.blockNumber ?? "", row.gasUsed ?? "", row.error ?? ""]);
+    downloadText(`run-transactions-${Date.now()}.csv`, [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\n") + "\n", "text/csv");
+  }
+
+  function exportNormalizedJson() {
+    if (!report) return;
+    downloadText(`normalized-run-report-${Date.now()}.json`, `${JSON.stringify(report, null, 2)}\n`, "application/json");
+  }
+
   return (
     <div className={cx("text-slate-950", embedded ? "" : "min-h-screen bg-[radial-gradient(circle_at_top_left,#ede9fe_0,#f8fafc_36%,#ffffff_72%)] px-4 py-6 sm:px-6 lg:px-8")}>
       <main className={cx("mx-auto flex w-full flex-col gap-6", embedded ? "" : "max-w-7xl")}>
@@ -65,6 +77,10 @@ export default function RunReportViewer({ embedded = false }: { embedded?: boole
         {report ? (
           <section className="rounded-[2rem] border border-violet-100 bg-white/90 p-4 shadow-sm backdrop-blur md:p-5">
             <ReportSummary report={report} />
+            <div className="mt-5 flex flex-wrap gap-2">
+              <button type="button" onClick={exportTransactionsCsv} className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-black uppercase tracking-[0.14em] text-emerald-700">Export tx CSV</button>
+              <button type="button" onClick={exportNormalizedJson} className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-black uppercase tracking-[0.14em] text-slate-700">Export normalized JSON</button>
+            </div>
             <div className="mt-5 flex flex-wrap gap-2 rounded-2xl bg-slate-100 p-1">
               {REPORT_TABS.map((tab) => (
                 <button
@@ -307,6 +323,13 @@ function TransactionsTable({ rows }: { rows: NormalizedRunTransaction[] }) {
 
 function AnalyticsPanel({ report }: { report: NormalizedRunReport }) {
   const { analytics } = report;
+  const statusBars = [
+    { label: "Confirmed", value: analytics.confirmedTransactions, tone: "bg-emerald-500" },
+    { label: "Pending", value: analytics.pendingTransactions, tone: "bg-amber-500" },
+    { label: "Failed", value: analytics.failedTransactions, tone: "bg-red-500" },
+  ];
+  const failureClusters = clusterFailures(report.transactions);
+  const walletTimeline = report.transactions.slice(0, 12);
   return (
     <div className="grid gap-4 lg:grid-cols-[1fr_0.9fr]">
       <section className="grid gap-3 sm:grid-cols-2">
@@ -317,23 +340,56 @@ function AnalyticsPanel({ report }: { report: NormalizedRunReport }) {
         <MetricCard label="Unique wallets" value={analytics.uniqueWallets.toLocaleString()} detail="alias/address set" tone="violet" />
         <MetricCard label="Avg gas" value={analytics.averageGasUsed ? analytics.averageGasUsed.toLocaleString() : "—"} detail="confirmed receipts" tone="slate" />
       </section>
-      <section className="rounded-3xl border border-violet-100 bg-violet-50/70 p-4">
-        <p className="text-xs font-black uppercase tracking-[0.22em] text-violet-600">Report notes</p>
-        <div className="mt-3 grid gap-2 text-sm font-semibold text-slate-600">
-          <p><span className="font-black text-slate-950">Source:</span> {report.sourceName}</p>
-          <p><span className="font-black text-slate-950">Chain:</span> {report.chain.name} ({report.chain.chainId})</p>
-          <p><span className="font-black text-slate-950">Explorer:</span> {report.chain.explorer}</p>
-          {report.warnings.length > 0 ? (
-            <ul className="mt-2 list-inside list-disc space-y-1 text-amber-800">
-              {report.warnings.map((warning) => <li key={warning}>{warning}</li>)}
-            </ul>
-          ) : (
-            <p className="text-slate-400">No warnings supplied in the report.</p>
-          )}
+      <section className="grid gap-4">
+        <div className="rounded-3xl border border-violet-100 bg-violet-50/70 p-4">
+          <p className="text-xs font-black uppercase tracking-[0.22em] text-violet-600">Status chart</p>
+          <div className="mt-3 grid gap-3">
+            {statusBars.map((bar) => <BarRow key={bar.label} label={bar.label} value={bar.value} total={Math.max(1, analytics.totalTransactions)} tone={bar.tone} />)}
+          </div>
+        </div>
+        <div className="rounded-3xl border border-slate-200 bg-white p-4">
+          <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-500">Per-wallet timeline</p>
+          <div className="mt-3 space-y-2">
+            {walletTimeline.map((row) => <div key={row.id} className="flex items-center justify-between gap-3 rounded-2xl bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600"><span>{row.walletAlias} · {row.stageLabel}</span><StatusBadge status={row.status} /></div>)}
+          </div>
+        </div>
+        <div className="rounded-3xl border border-red-100 bg-red-50/60 p-4">
+          <p className="text-xs font-black uppercase tracking-[0.22em] text-red-700">Failure clusters</p>
+          {failureClusters.length ? <div className="mt-3 space-y-2">{failureClusters.map((item) => <p key={item.label} className="rounded-2xl bg-white px-3 py-2 text-sm font-bold text-red-800">{item.count}× {item.label}</p>)}</div> : <p className="mt-3 text-sm font-semibold text-slate-500">No failed transaction errors in this report.</p>}
+        </div>
+        <div className="rounded-3xl border border-violet-100 bg-violet-50/70 p-4">
+          <p className="text-xs font-black uppercase tracking-[0.22em] text-violet-600">Report notes</p>
+          <div className="mt-3 grid gap-2 text-sm font-semibold text-slate-600">
+            <p><span className="font-black text-slate-950">Source:</span> {report.sourceName}</p>
+            <p><span className="font-black text-slate-950">Chain:</span> {report.chain.name} ({report.chain.chainId})</p>
+            <p><span className="font-black text-slate-950">Explorer:</span> {report.chain.explorer}</p>
+            {report.warnings.length > 0 ? (
+              <ul className="mt-2 list-inside list-disc space-y-1 text-amber-800">
+                {report.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+              </ul>
+            ) : (
+              <p className="text-slate-400">No warnings supplied in the report.</p>
+            )}
+          </div>
         </div>
       </section>
     </div>
   );
+}
+
+function BarRow({ label, value, total, tone }: { label: string; value: number; total: number; tone: string }) {
+  const pct = Math.round((value / total) * 100);
+  return <div><div className="flex justify-between text-xs font-black text-slate-600"><span>{label}</span><span>{value} · {pct}%</span></div><div className="mt-1 h-2 overflow-hidden rounded-full bg-white"><div className={`h-full rounded-full ${tone}`} style={{ width: `${pct}%` }} /></div></div>;
+}
+
+function clusterFailures(rows: NormalizedRunTransaction[]) {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    if (row.status !== "failed") continue;
+    const label = (row.error ?? "Unknown failure").slice(0, 120);
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  return Array.from(counts.entries()).map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count).slice(0, 5);
 }
 
 function EmptyReportState() {
@@ -397,4 +453,20 @@ function formatPercent(value: number) {
 function shorten(value: string, size = 6) {
   if (value.length <= size * 2 + 1) return value;
   return `${value.slice(0, size)}…${value.slice(-size)}`;
+}
+
+function downloadText(filename: string, text: string, type: string) {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function csvCell(value: string | number) {
+  return `"${String(value).replace(/"/g, '""')}"`;
 }

@@ -1,23 +1,40 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { OpportunityScanResult } from "@/lib/opportunity-scan";
 
 const WATCHLIST_KEY = "compas.opportunityWatchlist.v1";
+const WATCHLIST_META_KEY = "compas.opportunityWatchlistMeta.v1";
 const SCAN_HISTORY_KEY = "compas.opportunityScanHistory.v1";
 const FIELD = "rounded-2xl border border-violet-100 bg-white px-4 py-3 text-sm font-bold text-slate-950 outline-none shadow-sm placeholder:text-slate-400 focus:border-violet-300 focus:ring-4 focus:ring-violet-100";
 
+type WatchStatus = "watching" | "ready" | "ignored";
+type WatchMeta = Record<string, { status: WatchStatus; note: string }>;
+
 export default function OpportunityWatchPanel({ embedded = false }: { embedded?: boolean }) {
   const [watchlist, setWatchlist] = useState(() => readWatchlist());
+  const [meta, setMeta] = useState<WatchMeta>(() => readWatchMeta());
   const [draft, setDraft] = useState("");
   const [chain, setChain] = useState("base");
   const [scan, setScan] = useState<OpportunityScanResult | null>(null);
   const [history, setHistory] = useState<OpportunityScanResult[]>(() => readScanHistory());
   const [busy, setBusy] = useState(false);
+  const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(0);
+  const [selectedQuery, setSelectedQuery] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const canScan = watchlist.length > 0 && !busy;
   const topCandidate = useMemo(() => scan?.candidates[0], [scan]);
+  const selectedCandidate = scan?.candidates.find((candidate) => candidate.query === selectedQuery) ?? topCandidate;
+
+  useEffect(() => {
+    if (!autoRefreshSeconds || watchlist.length === 0) return;
+    const timer = window.setInterval(() => {
+      void runScan();
+    }, autoRefreshSeconds * 1000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRefreshSeconds, watchlist, chain]);
 
   function addItem(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -31,6 +48,9 @@ export default function OpportunityWatchPanel({ embedded = false }: { embedded?:
     const next = Array.from(new Set([value, ...watchlist])).slice(0, 8);
     setWatchlist(next);
     writeWatchlist(next);
+    const nextMeta = { ...meta, [value]: meta[value] ?? { status: "watching" as WatchStatus, note: "" } };
+    setMeta(nextMeta);
+    writeWatchMeta(nextMeta);
     setDraft("");
     setError(null);
   }
@@ -39,6 +59,11 @@ export default function OpportunityWatchPanel({ embedded = false }: { embedded?:
     const next = watchlist.filter((candidate) => candidate !== item);
     setWatchlist(next);
     writeWatchlist(next);
+    const nextMeta = { ...meta };
+    delete nextMeta[item];
+    setMeta(nextMeta);
+    writeWatchMeta(nextMeta);
+    if (selectedQuery === item) setSelectedQuery(null);
   }
 
   async function runScan() {
@@ -62,20 +87,33 @@ export default function OpportunityWatchPanel({ embedded = false }: { embedded?:
 
   function downloadLatestScan() {
     if (!scan) return;
-    const blob = new Blob([`${JSON.stringify(scan, null, 2)}\n`], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `opportunity-scan-${Date.now()}.json`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    downloadText(`opportunity-scan-${Date.now()}.json`, `${JSON.stringify(scan, null, 2)}\n`, "application/json");
   }
 
   function clearHistory() {
     setHistory([]);
     writeScanHistory([]);
+  }
+
+  function updateItemMeta(item: string, patch: Partial<{ status: WatchStatus; note: string }>) {
+    const next = { ...meta, [item]: { status: meta[item]?.status ?? "watching", note: meta[item]?.note ?? "", ...patch } };
+    setMeta(next);
+    writeWatchMeta(next);
+  }
+
+  function exportScanCsv() {
+    if (!scan) return;
+    const header = ["query", "name", "chain", "address", "signal", "score", "nextAction", "openStageCount", "executableStageCount", "warnings", "status", "note"];
+    const rows = scan.candidates.map((candidate) => {
+      const itemMeta = meta[candidate.query];
+      return [candidate.query, candidate.name, candidate.chain, candidate.address, candidate.signal, candidate.score, candidate.nextAction, candidate.openStageCount, candidate.executableStageCount, candidate.warnings.join("; "), itemMeta?.status ?? "watching", itemMeta?.note ?? ""];
+    });
+    downloadText(`opportunity-scan-${Date.now()}.csv`, [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\n") + "\n", "text/csv");
+  }
+
+  function exportWatchlistJson() {
+    const payload = { schemaVersion: "compas-watchlist.v1", exportedAt: new Date().toISOString(), chain, watchlist: watchlist.map((item) => ({ query: item, ...meta[item] })) };
+    downloadText(`watchlist-${Date.now()}.json`, `${JSON.stringify(payload, null, 2)}\n`, "application/json");
   }
 
   return (
@@ -114,21 +152,45 @@ export default function OpportunityWatchPanel({ embedded = false }: { embedded?:
           </form>
 
           <div className="mt-4 space-y-2">
-            {watchlist.length ? watchlist.map((item) => (
-              <div key={item} className="flex items-center justify-between gap-3 rounded-2xl border border-violet-100 bg-white px-3 py-2">
-                <span className="truncate font-mono text-xs font-bold text-slate-600">{item}</span>
-                <button type="button" onClick={() => removeItem(item)} className="rounded-full border border-slate-200 px-2 py-1 text-xs font-black text-slate-500">Remove</button>
+            {watchlist.length ? watchlist.map((item) => {
+              const itemMeta = meta[item] ?? { status: "watching" as WatchStatus, note: "" };
+              return (
+              <div key={item} className="grid gap-2 rounded-2xl border border-violet-100 bg-white px-3 py-2">
+                <div className="flex items-center justify-between gap-3">
+                  <button type="button" onClick={() => setSelectedQuery(item)} className="truncate font-mono text-xs font-bold text-slate-600 hover:text-violet-700">{item}</button>
+                  <button type="button" onClick={() => removeItem(item)} className="rounded-full border border-slate-200 px-2 py-1 text-xs font-black text-slate-500">Remove</button>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-[0.7fr_1.3fr]">
+                  <select value={itemMeta.status} onChange={(event) => updateItemMeta(item, { status: event.target.value as WatchStatus })} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700">
+                    <option value="watching">watching</option>
+                    <option value="ready">ready</option>
+                    <option value="ignored">ignored</option>
+                  </select>
+                  <input value={itemMeta.note} onChange={(event) => updateItemMeta(item, { note: event.target.value })} placeholder="note" className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 outline-none" />
+                </div>
               </div>
-            )) : <p className="rounded-2xl border border-dashed border-violet-200 bg-white/70 px-3 py-6 text-center text-sm font-semibold text-slate-500">No watchlist yet.</p>}
+            );
+            }) : <p className="rounded-2xl border border-dashed border-violet-200 bg-white/70 px-3 py-6 text-center text-sm font-semibold text-slate-500">No watchlist yet.</p>}
           </div>
 
           <button type="button" onClick={runScan} disabled={!canScan} className="mt-4 w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-black uppercase tracking-[0.18em] text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-50">
             {busy ? "Scanning…" : "Run preview scan"}
           </button>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            <button type="button" onClick={downloadLatestScan} disabled={!scan} className="rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-xs font-black uppercase tracking-[0.14em] text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">Export latest</button>
+            <button type="button" onClick={downloadLatestScan} disabled={!scan} className="rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-xs font-black uppercase tracking-[0.14em] text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">Export JSON</button>
+            <button type="button" onClick={exportScanCsv} disabled={!scan} className="rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-xs font-black uppercase tracking-[0.14em] text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">Export CSV</button>
+            <button type="button" onClick={exportWatchlistJson} disabled={watchlist.length === 0} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs font-black uppercase tracking-[0.14em] text-slate-600 disabled:cursor-not-allowed disabled:opacity-50">Export watchlist</button>
             <button type="button" onClick={clearHistory} disabled={history.length === 0} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs font-black uppercase tracking-[0.14em] text-slate-500 disabled:cursor-not-allowed disabled:opacity-50">Clear history</button>
           </div>
+          <label className="mt-3 grid gap-2 text-xs font-black uppercase tracking-[0.18em] text-slate-500">
+            Auto-refresh
+            <select value={autoRefreshSeconds} onChange={(event) => setAutoRefreshSeconds(Number(event.target.value))} className={FIELD}>
+              <option value={0}>Off</option>
+              <option value={60}>Every 1 min</option>
+              <option value={300}>Every 5 min</option>
+              <option value={900}>Every 15 min</option>
+            </select>
+          </label>
         </div>
 
         <div className="rounded-3xl border border-violet-100 bg-white p-4">
@@ -147,6 +209,8 @@ export default function OpportunityWatchPanel({ embedded = false }: { embedded?:
               <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">{topCandidate.reason}</p>
             </div>
           ) : <p className="mt-4 rounded-3xl border border-dashed border-violet-200 bg-violet-50/60 p-6 text-center text-sm font-semibold text-slate-500">Run a scan to see ranked opportunities.</p>}
+
+          {selectedCandidate ? <CandidateDetail candidate={selectedCandidate} meta={meta[selectedCandidate.query]} /> : null}
 
           {scan?.candidates.length ? <div className="mt-4 space-y-2">{scan.candidates.map((candidate) => <CandidateRow key={`${candidate.query}-${candidate.address}`} candidate={candidate} />)}</div> : null}
           {scan?.errors.length ? <ul className="mt-4 space-y-1 text-xs font-bold text-amber-700">{scan.errors.map((err) => <li key={err.query}>⚠ {err.query}: {err.error}</li>)}</ul> : null}
@@ -182,6 +246,32 @@ function CandidateRow({ candidate }: { candidate: OpportunityScanResult["candida
   );
 }
 
+function CandidateDetail({ candidate, meta }: { candidate: OpportunityScanResult["candidates"][number]; meta?: { status: WatchStatus; note: string } }) {
+  const checklist = [
+    { label: "Contract resolved", ok: /^0x[a-fA-F0-9]{40}$/.test(candidate.address) },
+    { label: "Executable public stage", ok: candidate.executableStageCount > 0 },
+    { label: "No discovery warnings", ok: candidate.warnings.length === 0 },
+    { label: "Marked ready by operator", ok: meta?.status === "ready" },
+  ];
+  return (
+    <aside className="mt-4 rounded-3xl border border-slate-200 bg-slate-50/80 p-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">Candidate detail</p>
+          <h3 className="mt-1 text-lg font-black text-slate-950">{candidate.name}</h3>
+          <p className="font-mono text-xs font-bold text-slate-500">{candidate.chain} · {candidate.address}</p>
+        </div>
+        <span className="rounded-full border border-violet-200 bg-white px-3 py-1 text-xs font-black uppercase tracking-[0.12em] text-violet-700">{meta?.status ?? "watching"}</span>
+      </div>
+      {meta?.note ? <p className="mt-3 rounded-2xl bg-white p-3 text-sm font-semibold text-slate-600">{meta.note}</p> : null}
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        {checklist.map((item) => <div key={item.label} className={`rounded-2xl border px-3 py-2 text-xs font-black ${item.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>{item.ok ? "✓" : "○"} {item.label}</div>)}
+      </div>
+      {candidate.warnings.length ? <ul className="mt-3 list-inside list-disc text-xs font-bold text-amber-800">{candidate.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul> : null}
+    </aside>
+  );
+}
+
 function Metric({ label, value }: { label: string; value: string | number }) {
   return <div className="rounded-2xl border border-violet-100 bg-violet-50/50 p-3"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">{label}</p><p className="mt-1 text-sm font-black text-slate-950">{value}</p></div>;
 }
@@ -201,6 +291,21 @@ function writeWatchlist(items: string[]) {
   window.localStorage.setItem(WATCHLIST_KEY, JSON.stringify(items));
 }
 
+function readWatchMeta(): WatchMeta {
+  if (typeof window === "undefined") return {};
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(WATCHLIST_META_KEY) ?? "{}");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed as WatchMeta;
+  } catch {
+    return {};
+  }
+}
+
+function writeWatchMeta(meta: WatchMeta) {
+  window.localStorage.setItem(WATCHLIST_META_KEY, JSON.stringify(meta));
+}
+
 function readScanHistory(): OpportunityScanResult[] {
   if (typeof window === "undefined") return [];
   try {
@@ -214,4 +319,20 @@ function readScanHistory(): OpportunityScanResult[] {
 
 function writeScanHistory(items: OpportunityScanResult[]) {
   window.localStorage.setItem(SCAN_HISTORY_KEY, JSON.stringify(items.slice(0, 5)));
+}
+
+function downloadText(filename: string, text: string, type: string) {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function csvCell(value: string | number) {
+  return `"${String(value).replace(/"/g, '""')}"`;
 }
