@@ -265,7 +265,7 @@ function AutopilotPanel({ holderAddress, policy, proposal, setPolicy }: { holder
         <div>
           <p className="text-xs font-black uppercase tracking-[0.18em] text-fuchsia-700">Compas autopilot</p>
           <h3 className="mt-1 text-lg font-black text-slate-950">Auto-scan → auto-propose → manual broadcast</h3>
-          <p className="mt-1 text-xs font-bold text-slate-600">Fully automated discovery/proposal for Compas holder recipient. Real ETH broadcast remains explicit/manual.</p>
+          <p className="mt-1 text-xs font-bold text-slate-600">Fully automated discovery/proposal for Compas holder recipient. Canary mode clamps quantity to 1 and real ETH broadcast remains explicit/manual.</p>
         </div>
         <label className="flex items-center gap-2 rounded-full bg-white px-3 py-2 text-xs font-black text-fuchsia-700">
           <input type="checkbox" checked={policy.enabled} onChange={(event) => setPolicy({ ...policy, enabled: event.target.checked })} /> Enabled
@@ -280,6 +280,10 @@ function AutopilotPanel({ holderAddress, policy, proposal, setPolicy }: { holder
           <option value="auto-simulate">auto-simulate draft</option>
         </select>
       </div>
+      <label className="mt-3 grid gap-2 text-xs font-black uppercase tracking-[0.18em] text-slate-500">
+        Allowed contract canary lock
+        <input value={policy.allowedContracts.join(", ")} onChange={(event) => setPolicy({ ...policy, allowedContracts: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} placeholder="optional 0x contract allowlist" className={`${FIELD} font-mono normal-case tracking-normal`} />
+      </label>
       <div className="mt-3 rounded-2xl bg-white p-3 text-xs font-bold text-slate-600">
         Holder recipient: {holderAddress ? holderAddress : "connect/sign as Compas holder to resolve"}
       </div>

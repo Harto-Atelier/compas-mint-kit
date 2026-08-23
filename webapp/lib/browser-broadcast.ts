@@ -125,6 +125,23 @@ export interface BrowserGasStrategyPlan extends BrowserGasStrategyInput {
   warnings: string[];
 }
 
+export interface BrowserMintSafetyCheck {
+  id: string;
+  ok: boolean;
+  label: string;
+  value: string;
+}
+
+export interface BrowserMintCalldataReview {
+  functionName: "mintPublic" | "unknown";
+  nftContract?: string;
+  feeRecipient?: string;
+  minterIfNotPayer?: string;
+  quantity?: string;
+  checks: BrowserMintSafetyCheck[];
+  readyForBroadcast: boolean;
+}
+
 export interface BrowserRpcProviderLike {
   call(request: BrowserPreparedMintRequest & { from: string }): Promise<string>;
   estimateGas(request: BrowserPreparedMintRequest & { from: string }): Promise<bigint>;
@@ -273,6 +290,29 @@ function resolveRecipientPlan(input: BrowserMintPlanInput): { mode: BrowserMintR
     throw new Error(mode === "holder" ? "Connect and verify a Compas holder wallet before routing mints to the holder recipient." : "Enter a valid custom recipient address before preparing recipient-routed mints.");
   }
   return { mode, address };
+}
+
+export function reviewPreparedBrowserMintCalldata(tx: BrowserPreparedMint, expected?: { collectionAddress?: string; holderRecipientAddress?: string | null; maxQuantity?: number }): BrowserMintCalldataReview {
+  try {
+    const decoded = IFACE.decodeFunctionData("mintPublic", tx.request.data);
+    const nftContract = String(decoded[0]);
+    const feeRecipient = String(decoded[1]);
+    const minterIfNotPayer = String(decoded[2]);
+    const quantity = decoded[3].toString();
+    const recipientTarget = tx.recipientMode === "payer" ? ZERO_ADDRESS : tx.recipientAddress;
+    const checks: BrowserMintSafetyCheck[] = [
+      { id: "function", label: "Function", ok: true, value: "mintPublic" },
+      { id: "collection", label: "Collection matches", ok: !expected?.collectionAddress || nftContract.toLowerCase() === expected.collectionAddress.toLowerCase(), value: nftContract },
+      { id: "recipient", label: "Recipient routing matches", ok: minterIfNotPayer.toLowerCase() === recipientTarget.toLowerCase(), value: minterIfNotPayer },
+      { id: "holder", label: "Verified holder recipient", ok: tx.recipientMode !== "holder" || Boolean(expected?.holderRecipientAddress && tx.recipientAddress.toLowerCase() === expected.holderRecipientAddress.toLowerCase()), value: tx.recipientAddress },
+      { id: "quantity", label: "Quantity within policy", ok: !expected?.maxQuantity || Number(quantity) <= expected.maxQuantity, value: quantity },
+      { id: "status", label: "Simulation passed", ok: tx.status === "simulated", value: tx.status },
+    ];
+    return { functionName: "mintPublic", nftContract, feeRecipient, minterIfNotPayer, quantity, checks, readyForBroadcast: checks.every((check) => check.ok) };
+  } catch {
+    const checks = [{ id: "function", label: "Function", ok: false, value: "unrecognized calldata" }];
+    return { functionName: "unknown", checks, readyForBroadcast: false };
+  }
 }
 
 export async function simulatePreparedBrowserMint(tx: BrowserPreparedMint, provider?: BrowserRpcProviderLike): Promise<BrowserPreparedMint> {

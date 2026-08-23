@@ -8,6 +8,7 @@ import {
   broadcastPreparedBrowserMint,
   browserChainConfig,
   explorerTxUrl,
+  reviewPreparedBrowserMintCalldata,
   simulatePreparedBrowserMint,
   type BrowserMintStageInput,
   type UnlockedLaunchVault,
@@ -225,4 +226,26 @@ test("holder recipient routing fails closed without a verified holder address", 
     }),
     /verify a Compas holder wallet/i,
   );
+});
+
+test("pre-broadcast calldata review decodes SeaDrop mintPublic and blocks unsimulated txs", async () => {
+  const holderRecipient = "0x3333333333333333333333333333333333333333";
+  const plan = buildBrowserMintPlan({
+    chainKey: "base",
+    collectionAddress: COLLECTION,
+    stages: [publicStage],
+    walletCount: 1,
+    vault: unlockedVault,
+    recipientMode: "holder",
+    holderRecipientAddress: holderRecipient,
+  });
+  const preparedReview = reviewPreparedBrowserMintCalldata(plan.transactions[0], { collectionAddress: COLLECTION, holderRecipientAddress: holderRecipient, maxQuantity: 2 });
+  assert.equal(preparedReview.functionName, "mintPublic");
+  assert.equal(preparedReview.readyForBroadcast, false);
+  assert.equal(preparedReview.checks.find((check) => check.id === "status")?.ok, false);
+
+  const simulated = await simulatePreparedBrowserMint(plan.transactions[0], { call: async () => "0x", estimateGas: async () => BigInt(123456) });
+  const simulatedReview = reviewPreparedBrowserMintCalldata(simulated, { collectionAddress: COLLECTION, holderRecipientAddress: holderRecipient, maxQuantity: 2 });
+  assert.equal(simulatedReview.readyForBroadcast, true);
+  assert.equal(simulatedReview.minterIfNotPayer, holderRecipient);
 });

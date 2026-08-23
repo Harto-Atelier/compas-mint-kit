@@ -17,6 +17,7 @@ import {
   browserChainConfig,
   buildBrowserMintPlan,
   simulatePreparedBrowserMint,
+  reviewPreparedBrowserMintCalldata,
   type BrowserBroadcastChainKey,
   type BrowserMintRecipientMode,
   type BrowserMintStageInput,
@@ -95,8 +96,16 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages, 
   const simulatedCount = transactions.filter((tx) => tx.status === "simulated").length;
   const broadcastCount = transactions.filter((tx) => tx.status === "broadcast").length;
   const failedCount = transactions.filter((tx) => tx.status === "failed").length;
-  const canOpenBroadcast = transactions.length > 0 && simulatedCount === transactions.length;
   const canExportBrowserReport = transactions.length > 0 && transactions.some((tx) => tx.status === "broadcast" || tx.status === "failed" || tx.status === "simulated");
+  const safetyReviews = useMemo(
+    () => transactions.map((tx) => ({
+      tx,
+      review: reviewPreparedBrowserMintCalldata(tx, { collectionAddress: collection.address, holderRecipientAddress: holderSession?.address, maxQuantity: autopilotHandoff?.signerDefaults.quantity ?? 1 }),
+    })),
+    [transactions, collection.address, holderSession, autopilotHandoff],
+  );
+  const allSafetyChecksPass = safetyReviews.length === 0 || safetyReviews.every((item) => item.review.readyForBroadcast);
+  const canOpenBroadcast = transactions.length > 0 && simulatedCount === transactions.length && allSafetyChecksPass;
 
   async function handleUnlock(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -341,6 +350,23 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages, 
             </div>
             {gasStrategy.warnings.length ? <ul className="mt-2 space-y-1 text-xs font-bold text-amber-700">{gasStrategy.warnings.map((warning) => <li key={warning}>⚠ {warning}</li>)}</ul> : null}
           </div>
+
+          {safetyReviews.length ? (
+            <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3">
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-700">Pre-broadcast decoded calldata</p>
+              <p className="mt-1 text-xs font-bold text-slate-600">Broadcast stays disabled unless every tx decodes to SeaDrop mintPublic, recipient matches policy, quantity is within canary, and simulation passed.</p>
+              <div className="mt-3 space-y-2">
+                {safetyReviews.slice(0, 3).map(({ tx, review }) => (
+                  <div key={tx.id} className="rounded-2xl bg-white p-3 text-xs font-bold text-slate-600">
+                    <p className="font-black text-slate-950">{tx.walletAlias} → {maskVaultAddress(tx.recipientAddress)} · {review.functionName}</p>
+                    <div className="mt-2 grid gap-1 sm:grid-cols-2">
+                      {review.checks.map((check) => <span key={`${tx.id}-${check.id}`} className={check.ok ? "text-emerald-700" : "text-red-700"}>{check.ok ? "✓" : "✕"} {check.label}: {check.value}</span>)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
             <button type="button" onClick={handlePrepare} disabled={!vault || !chain.ready || Boolean(busy)} className="h-12 rounded-2xl border border-amber-200 bg-white px-4 font-black text-amber-700 shadow-sm transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50">

@@ -11,6 +11,8 @@ export interface CompasAutopilotPolicy {
   allowedChains: string[];
   recipientMode: "verified-compas-holder";
   requireExecutableSeaDrop: true;
+  canaryMode: true;
+  allowedContracts: string[];
 }
 
 export interface CompasAutopilotProposal {
@@ -69,6 +71,8 @@ export function defaultCompasAutopilotPolicy(): CompasAutopilotPolicy {
     allowedChains: ["Base", "Ethereum"],
     recipientMode: "verified-compas-holder",
     requireExecutableSeaDrop: true,
+    canaryMode: true,
+    allowedContracts: [],
   };
 }
 
@@ -83,10 +87,14 @@ export function buildCompasAutopilotProposal(input: {
   if (!candidate) return null;
 
   const holderResolved = Boolean(input.holderAddress && /^0x[a-fA-F0-9]{40}$/.test(input.holderAddress));
+  const contractAllowed = input.policy.allowedContracts.length === 0 || input.policy.allowedContracts.some((address) => address.toLowerCase() === candidate.address.toLowerCase());
   const checklist = [
+    { label: "Canary mode enabled", ok: input.policy.canaryMode === true },
     { label: "Ready opportunity signal", ok: candidate.signal === "ready" },
     { label: "Executable SeaDrop public stage", ok: candidate.executableStageCount > 0 },
     { label: "Allowed chain", ok: input.policy.allowedChains.includes(candidate.chain) },
+    { label: "Allowed contract", ok: contractAllowed },
+    { label: "Canary quantity = 1", ok: Math.floor(input.policy.maxQuantity) === 1 },
     { label: "Compas holder recipient resolved", ok: holderResolved },
     { label: "Manual broadcast still required", ok: true },
   ];
@@ -110,7 +118,7 @@ export function buildCompasAutopilotProposal(input: {
     policy: input.policy,
     recipient: { mode: "verified-compas-holder", address: input.holderAddress ?? undefined, status: holderResolved ? "resolved" : "missing-holder-session" },
     proposedPlan: {
-      quantity: Math.max(1, Math.floor(input.policy.maxQuantity)),
+      quantity: input.policy.canaryMode ? 1 : Math.max(1, Math.floor(input.policy.maxQuantity)),
       maxTotalEth: input.policy.maxTotalEth,
       maxGasGwei: input.policy.maxGasGwei,
       route: "watch-scan-to-browser-signer",
