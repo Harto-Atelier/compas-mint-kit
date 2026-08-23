@@ -28,6 +28,11 @@ const featureCards = [
     art: "vault",
   },
   {
+    title: "Watchlist signals",
+    body: "Add drops, run preview scans, and rank candidates before deciding what deserves attention.",
+    art: "signals",
+  },
+  {
     title: "Simulation before send",
     body: "Prepare transactions locally, dry-run first, then require a broadcast modal with explicit operator review.",
     art: "speed",

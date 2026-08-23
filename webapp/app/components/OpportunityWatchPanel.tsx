@@ -4,6 +4,7 @@ import { FormEvent, useMemo, useState } from "react";
 import type { OpportunityScanResult } from "@/lib/opportunity-scan";
 
 const WATCHLIST_KEY = "compas.opportunityWatchlist.v1";
+const SCAN_HISTORY_KEY = "compas.opportunityScanHistory.v1";
 const FIELD = "rounded-2xl border border-violet-100 bg-white px-4 py-3 text-sm font-bold text-slate-950 outline-none shadow-sm placeholder:text-slate-400 focus:border-violet-300 focus:ring-4 focus:ring-violet-100";
 
 export default function OpportunityWatchPanel({ embedded = false }: { embedded?: boolean }) {
@@ -11,6 +12,7 @@ export default function OpportunityWatchPanel({ embedded = false }: { embedded?:
   const [draft, setDraft] = useState("");
   const [chain, setChain] = useState("base");
   const [scan, setScan] = useState<OpportunityScanResult | null>(null);
+  const [history, setHistory] = useState<OpportunityScanResult[]>(() => readScanHistory());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,11 +50,32 @@ export default function OpportunityWatchPanel({ embedded = false }: { embedded?:
       const body = (await response.json()) as OpportunityScanResult;
       if (!response.ok) throw new Error("Opportunity scan failed.");
       setScan(body);
+      const nextHistory = [body, ...history].slice(0, 5);
+      setHistory(nextHistory);
+      writeScanHistory(nextHistory);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
+  }
+
+  function downloadLatestScan() {
+    if (!scan) return;
+    const blob = new Blob([`${JSON.stringify(scan, null, 2)}\n`], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `opportunity-scan-${Date.now()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function clearHistory() {
+    setHistory([]);
+    writeScanHistory([]);
   }
 
   return (
@@ -102,6 +125,10 @@ export default function OpportunityWatchPanel({ embedded = false }: { embedded?:
           <button type="button" onClick={runScan} disabled={!canScan} className="mt-4 w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-black uppercase tracking-[0.18em] text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-50">
             {busy ? "Scanning…" : "Run preview scan"}
           </button>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <button type="button" onClick={downloadLatestScan} disabled={!scan} className="rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-xs font-black uppercase tracking-[0.14em] text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">Export latest</button>
+            <button type="button" onClick={clearHistory} disabled={history.length === 0} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs font-black uppercase tracking-[0.14em] text-slate-500 disabled:cursor-not-allowed disabled:opacity-50">Clear history</button>
+          </div>
         </div>
 
         <div className="rounded-3xl border border-violet-100 bg-white p-4">
@@ -123,6 +150,19 @@ export default function OpportunityWatchPanel({ embedded = false }: { embedded?:
 
           {scan?.candidates.length ? <div className="mt-4 space-y-2">{scan.candidates.map((candidate) => <CandidateRow key={`${candidate.query}-${candidate.address}`} candidate={candidate} />)}</div> : null}
           {scan?.errors.length ? <ul className="mt-4 space-y-1 text-xs font-bold text-amber-700">{scan.errors.map((err) => <li key={err.query}>⚠ {err.query}: {err.error}</li>)}</ul> : null}
+          {history.length ? (
+            <div className="mt-5 rounded-3xl border border-slate-200 bg-slate-50/70 p-4">
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">Local scan history</p>
+              <div className="mt-3 space-y-2">
+                {history.map((item) => (
+                  <button key={item.generatedAt} type="button" onClick={() => setScan(item)} className="grid w-full gap-1 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-left text-xs font-bold text-slate-600 hover:border-violet-200">
+                    <span className="font-black text-slate-950">{new Date(item.generatedAt).toLocaleString()} · {item.candidates.length} candidates</span>
+                    <span>checked {item.checked} · errors {item.errors.length} · preview only</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
     </section>
@@ -159,4 +199,19 @@ function readWatchlist(): string[] {
 
 function writeWatchlist(items: string[]) {
   window.localStorage.setItem(WATCHLIST_KEY, JSON.stringify(items));
+}
+
+function readScanHistory(): OpportunityScanResult[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(SCAN_HISTORY_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? (parsed.slice(0, 5) as OpportunityScanResult[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeScanHistory(items: OpportunityScanResult[]) {
+  window.localStorage.setItem(SCAN_HISTORY_KEY, JSON.stringify(items.slice(0, 5)));
 }
