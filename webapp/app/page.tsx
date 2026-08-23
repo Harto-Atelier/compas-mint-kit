@@ -159,7 +159,7 @@ export default function LandingPage() {
 
   return (
     <main className="min-h-dvh overflow-x-hidden bg-[#f7f7f6] text-neutral-950">
-      <header className="mx-auto flex w-full max-w-[100vw] sm:max-w-[520px] flex-col gap-4 px-4 py-6 sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:py-10">
+      <header className="mx-auto flex w-full max-w-[100vw] flex-col gap-4 px-4 py-6 sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:py-10 lg:max-w-6xl">
         <div className="flex items-center justify-between">
           <Brand />
           <button type="button" onClick={() => setLoginOpen(true)} className="rounded-full bg-[#635bff] px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-[#5148ee] sm:hidden">Launch →</button>
@@ -171,7 +171,7 @@ export default function LandingPage() {
         </nav>
       </header>
 
-      <section className="mx-auto w-full max-w-[100vw] sm:max-w-[520px] px-4 pb-6 text-center sm:px-5">
+      <section className="mx-auto w-full max-w-[100vw] px-4 pb-6 text-center sm:px-5 lg:max-w-6xl">
         <p className="inline-flex rounded-full border border-violet-100 bg-white px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#635bff] shadow-sm sm:text-xs sm:tracking-[0.16em]">NFT mint command center</p>
         <h1 className="mx-auto mt-5 max-w-full text-balance break-words text-[2.35rem] font-black leading-[0.9] tracking-[-0.075em] text-neutral-950 [overflow-wrap:anywhere] min-[390px]:text-5xl sm:text-6xl">Mint faster without giving up control.</h1>
         <p className="mx-auto mt-4 max-w-md text-pretty text-sm font-medium leading-6 text-neutral-600 sm:text-base sm:leading-7">Compas Mint Kit turns the morsyxbt mint flow into a polished operator console: encrypted launch vaults, wallet staging, simulation-first execution, and real reports.</p>
@@ -181,13 +181,13 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <div className="mx-auto grid w-full max-w-[100vw] sm:max-w-[520px] grid-cols-1 gap-2 px-4 pb-4 text-center text-xs font-black min-[390px]:grid-cols-3 sm:px-5">
+      <div className="mx-auto grid w-full max-w-[100vw] grid-cols-1 gap-2 px-4 pb-4 text-center text-xs font-black min-[390px]:grid-cols-3 sm:px-5 lg:max-w-4xl">
         <span className="rounded-md bg-[#5865f2] px-2 py-1 text-white">Encrypted vault</span>
         <span className="rounded-md bg-sky-500 px-2 py-1 text-white">ETH / Base / Robinhood</span>
         <button type="button" onClick={() => setLoginOpen(true)} className="rounded-md border border-neutral-200 bg-white px-2 py-1 shadow-sm">Operator access</button>
       </div>
 
-      <section className="mx-auto grid w-full max-w-[100vw] sm:max-w-[520px] grid-cols-1 gap-4 px-4 pb-12 sm:grid-cols-2 sm:px-5">
+      <section className="mx-auto grid w-full max-w-[100vw] grid-cols-1 gap-4 px-4 pb-12 sm:grid-cols-2 sm:px-5 lg:max-w-6xl lg:grid-cols-3">
         {featureCards.map((card) => (
           <article key={card.title} className="min-h-56 overflow-hidden rounded-[0.35rem] border border-neutral-200 bg-white p-4 shadow-[0_1px_8px_rgba(0,0,0,0.06)]">
             <div className="h-32"><Art kind={card.art} /></div>
@@ -197,14 +197,14 @@ export default function LandingPage() {
         ))}
       </section>
 
-      <section id="pricing" className="mx-auto w-full max-w-[100vw] sm:max-w-[520px] px-4 pb-6 sm:px-5">
+      <section id="pricing" className="mx-auto w-full max-w-[100vw] px-4 pb-6 sm:px-5 lg:max-w-3xl">
         <div className="rounded-[0.35rem] border border-neutral-200 bg-white p-5 shadow-sm">
           <h2 className="text-2xl font-black tracking-tight">Access model</h2>
-          <p className="mt-2 text-sm font-medium leading-6 text-neutral-600">Preview is open for Harto operators. Production can add wallet-gated access, team seats, or a private deployment when you choose.</p>
+          <p className="mt-2 text-sm font-medium leading-6 text-neutral-600">Access is gated by a signed Compas holder check. The console opens only after wallet proof and an onchain balance read.</p>
         </div>
       </section>
 
-      <section id="faq" className="mx-auto w-full max-w-[100vw] sm:max-w-[520px] px-4 pb-12 sm:px-5">
+      <section id="faq" className="mx-auto w-full max-w-[100vw] px-4 pb-12 sm:px-5 lg:max-w-3xl">
         <div className="rounded-[0.35rem] border border-neutral-200 bg-white p-5 shadow-sm">
           <h2 className="text-2xl font-black tracking-tight">FAQ</h2>
           <dl className="mt-4 grid gap-4 text-sm">
@@ -214,7 +214,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <footer className="mx-auto flex w-full max-w-[100vw] sm:max-w-[520px] flex-col gap-2 px-4 pb-10 text-xs font-semibold text-neutral-500 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+      <footer className="mx-auto flex w-full max-w-[100vw] flex-col gap-2 px-4 pb-10 text-xs font-semibold text-neutral-500 sm:flex-row sm:items-center sm:justify-between sm:px-5 lg:max-w-6xl">
         <span>© 2026 Compas Mint Kit</span>
         <span>Built for Harto operators</span>
       </footer>

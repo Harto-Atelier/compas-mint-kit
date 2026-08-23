@@ -105,7 +105,7 @@ function Sidebar({
                 />
                 <span className="truncate">{tab}</span>
               </span>
-              <span className={cx("hidden text-xs sm:inline", active === tab ? "text-white/75" : "text-slate-400")}>⌘</span>
+              <span className={cx("hidden text-xs font-black sm:inline", active === tab ? "text-white/75" : "text-slate-400")}>→</span>
             </button>
           ))}
         </nav>
@@ -200,7 +200,7 @@ function StatusRow({ activeLaunchId }: { activeLaunchId: string }) {
       <div className="flex min-w-0 items-center gap-3">
         <div className="min-w-0 px-1">
           <p className="truncate text-sm font-black text-slate-950">
-            Active launch · <span className="font-mono text-xs">{activeLaunchId}</span>
+            Active launch · <span className="font-mono text-xs">{formatLaunchId(activeLaunchId)}</span>
           </p>
           <p className="text-xs font-semibold text-slate-500">Browser-local planner · no custody · nothing broadcast from the web</p>
         </div>
@@ -236,6 +236,14 @@ function MainPanel({ active }: { active: MainTab }) {
   }
 
   return <AcoPanel embedded />;
+}
+
+function formatLaunchId(activeLaunchId: string): string {
+  const match = activeLaunchId.match(/launch-(\d+)/);
+  if (!match) return activeLaunchId;
+  const date = new Date(Number(match[1]));
+  if (Number.isNaN(date.getTime())) return activeLaunchId;
+  return date.toLocaleDateString(undefined, { month: "short", day: "2-digit" });
 }
 
 export default function MintConsoleShell({ initialTab = "Mints" }: { initialTab?: MainTab }) {

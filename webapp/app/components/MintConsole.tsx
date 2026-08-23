@@ -15,7 +15,7 @@ import type {
 } from "@/lib/mint-types";
 import { createWalletAliases, buildLocalCliCommand, buildRunConfigFilename, containsBrowserExecutionSecret, type RunConfigExportError, type RunConfigExportResponse, type RunConfigStageInput } from "@/lib/run-config";
 
-const DEFAULT_QUERY = "base/collection/compas";
+const DEFAULT_QUERY = "";
 const MAX_RECOMMENDED_WALLETS = 20;
 
 const STAGE_ACCENTS: Record<StageKind, string> = {
@@ -165,7 +165,13 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
     clearScheduleReceipt();
 
     try {
-      const params = new URLSearchParams({ q: query, chain });
+      const trimmedQuery = query.trim();
+      if (!trimmedQuery) {
+        setError("Enter an OpenSea slug, collection URL, item URL, or public contract address.");
+        setLoading(false);
+        return;
+      }
+      const params = new URLSearchParams({ q: trimmedQuery, chain });
       const response = await fetch(`/api/mints/discover?${params.toString()}`, { cache: "no-store" });
       const body = (await response.json()) as MintDiscoveryResponse | MintDiscoveryError;
       if (!response.ok || !body.ok) throw new Error(body.ok ? "Discovery failed." : body.error);
@@ -297,7 +303,7 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
             </button>
           </div>
           <p className="mt-3 text-sm font-semibold text-slate-500">
-            Reads OpenSea metadata and local SeaDrop public config when available. Signed stages stay preview-only.
+            Paste a real collection slug, URL, item URL, or contract. The app reads public mint data when available; signed stages stay review-only until explicit broadcast.
           </p>
         </form>
 

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
 import { clearSignedGateSession, fetchSignedGateSession, readGateSession, writeGateSession, type CompasGateSession } from "@/lib/compas-gate";
 
@@ -34,19 +34,25 @@ export default function CompasGate({ children }: { children: React.ReactNode }) 
   const router = useRouter();
   const session = useSyncExternalStore(subscribe, getGateSnapshot, getServerSnapshot);
   const hydrated = useSyncExternalStore(() => () => {}, () => true, () => false);
+  const [serverChecked, setServerChecked] = useState(false);
 
   useEffect(() => {
-    if (session) return;
     let cancelled = false;
     fetchSignedGateSession().then((serverSession) => {
-      if (!cancelled && serverSession) writeGateSession(serverSession);
+      if (cancelled) return;
+      if (serverSession) writeGateSession(serverSession);
+      else if (readGateSession()) {
+        window.sessionStorage.removeItem("compas.walletGate.v1");
+        window.dispatchEvent(new Event("compas-gate-session"));
+      }
+      setServerChecked(true);
     });
     return () => {
       cancelled = true;
     };
-  }, [session]);
+  }, []);
 
-  if (!hydrated) {
+  if (!hydrated || !serverChecked) {
     return (
       <main className="grid min-h-dvh place-items-center bg-[#f7f7f6] px-4">
         <p className="text-sm font-black text-neutral-500">Checking access…</p>
