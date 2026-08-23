@@ -2,11 +2,18 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 
-import { clearGateSession, readGateSession, type CompasGateSession } from "@/lib/compas-gate";
+import { clearSignedGateSession, fetchSignedGateSession, readGateSession, writeGateSession, type CompasGateSession } from "@/lib/compas-gate";
 
-const noopSubscribe = () => () => {};
+const subscribe = (callback: () => void) => {
+  window.addEventListener("compas-gate-session", callback);
+  window.addEventListener("storage", callback);
+  return () => {
+    window.removeEventListener("compas-gate-session", callback);
+    window.removeEventListener("storage", callback);
+  };
+};
 let cachedRaw: string | null | undefined;
 let cachedSession: CompasGateSession | null = null;
 
@@ -25,8 +32,19 @@ function getServerSnapshot(): CompasGateSession | null {
 
 export default function CompasGate({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const session = useSyncExternalStore(noopSubscribe, getGateSnapshot, getServerSnapshot);
-  const hydrated = useSyncExternalStore(noopSubscribe, () => true, () => false);
+  const session = useSyncExternalStore(subscribe, getGateSnapshot, getServerSnapshot);
+  const hydrated = useSyncExternalStore(() => () => {}, () => true, () => false);
+
+  useEffect(() => {
+    if (session) return;
+    let cancelled = false;
+    fetchSignedGateSession().then((serverSession) => {
+      if (!cancelled && serverSession) writeGateSession(serverSession);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
 
   if (!hydrated) {
     return (
@@ -43,7 +61,7 @@ export default function CompasGate({ children }: { children: React.ReactNode }) 
           <p className="text-xs font-black uppercase tracking-[0.18em] text-[#635bff]">Compas holder access</p>
           <h1 className="mt-2 text-2xl font-black text-neutral-950">Console is wallet-gated</h1>
           <p className="mt-3 text-sm font-medium leading-6 text-neutral-600">
-            Connect a wallet holding at least one Compas from the landing page to enter the mint console.
+            Sign in from the landing page with a wallet holding at least one Compas. The server verifies the wallet signature and Compas ownership before issuing access.
           </p>
           <Link href="/" className="mt-5 inline-flex h-11 items-center justify-center rounded-2xl bg-[#635bff] px-6 text-sm font-black text-white shadow-lg shadow-[#635bff]/25 hover:bg-[#5148ee]">
             Go to login →
@@ -55,23 +73,20 @@ export default function CompasGate({ children }: { children: React.ReactNode }) 
 
   return (
     <>
-      {session ? (
-        <div className="flex items-center justify-between gap-3 bg-neutral-950 px-4 py-1.5 text-[11px] font-bold text-white">
-          <span className="truncate">
-            Compas holder {`${session.address.slice(0, 6)}…${session.address.slice(-4)}`} · {session.compasCount} Compas
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              clearGateSession();
-              router.push("/");
-            }}
-            className="shrink-0 rounded-full border border-white/25 px-3 py-0.5 font-black hover:bg-white/10"
-          >
-            Disconnect
-          </button>
-        </div>
-      ) : null}
+      <div className="flex items-center justify-between gap-3 bg-neutral-950 px-4 py-1.5 text-[11px] font-bold text-white">
+        <span className="truncate">
+          Compas holder {`${session.address.slice(0, 6)}…${session.address.slice(-4)}`} · {session.compasCount} Compas
+        </span>
+        <button
+          type="button"
+          onClick={() => {
+            void clearSignedGateSession().finally(() => router.push("/"));
+          }}
+          className="shrink-0 rounded-full border border-white/25 px-3 py-0.5 font-black hover:bg-white/10"
+        >
+          Disconnect
+        </button>
+      </div>
       {children}
     </>
   );

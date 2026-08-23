@@ -4,12 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import {
-  COMPAS_CONTRACT,
-  fetchCompasBalance,
-  isEthAddress,
-  writeGateSession,
-} from "@/lib/compas-gate";
+import { COMPAS_CONTRACT, isEthAddress, writeGateSession } from "@/lib/compas-gate";
 
 const featureCards = [
   {
@@ -55,12 +50,12 @@ function Brand() {
 
 function LoginModal({ onClose }: { onClose: () => void }) {
   const router = useRouter();
-  const [status, setStatus] = useState<"idle" | "connecting" | "checking">("idle");
+  const [status, setStatus] = useState<"idle" | "connecting" | "signing" | "checking">("idle");
   const [error, setError] = useState<string | null>(null);
 
   async function connectAndVerify() {
     setError(null);
-    const ethereum = (window as unknown as { ethereum?: { request: (args: { method: string }) => Promise<unknown> } }).ethereum;
+    const ethereum = (window as unknown as { ethereum?: { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> } }).ethereum;
     if (!ethereum) {
       setError("No wallet detected. Open this page in a wallet browser or install MetaMask/Rabby.");
       return;
@@ -74,14 +69,33 @@ function LoginModal({ onClose }: { onClose: () => void }) {
         setStatus("idle");
         return;
       }
+
+      const challengeResponse = await fetch("/api/auth/challenge", { method: "POST", credentials: "same-origin" });
+      if (!challengeResponse.ok) throw new Error("Could not create login challenge.");
+      const challenge = (await challengeResponse.json()) as { nonce?: unknown };
+      if (typeof challenge.nonce !== "string") throw new Error("Invalid login challenge.");
+      const message = [
+        "Compas Mint Kit holder login",
+        "",
+        "Sign this message to prove wallet ownership. No transaction will be sent.",
+        `Address: ${address.toLowerCase()}`,
+        `Nonce: ${challenge.nonce}`,
+      ].join("\n");
+
+      setStatus("signing");
+      const signature = (await ethereum.request({ method: "personal_sign", params: [message, address] })) as string;
       setStatus("checking");
-      const compasCount = await fetchCompasBalance(address);
-      if (compasCount < 1) {
-        setError("This wallet holds no Compas. Connect a wallet that holds at least one Compas to enter.");
-        setStatus("idle");
-        return;
+      const verifyResponse = await fetch("/api/auth/verify", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ address, signature }),
+      });
+      const verified = (await verifyResponse.json().catch(() => null)) as { address?: string; compasCount?: number; verifiedAt?: number; error?: string } | null;
+      if (!verifyResponse.ok || !verified || typeof verified.address !== "string" || typeof verified.compasCount !== "number" || typeof verified.verifiedAt !== "number") {
+        throw new Error(verified?.error || "Wallet verification failed.");
       }
-      writeGateSession({ address, compasCount, verifiedAt: Date.now() });
+      writeGateSession({ address: verified.address, compasCount: verified.compasCount, verifiedAt: verified.verifiedAt });
       router.push("/app");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Wallet connection failed.");
@@ -97,7 +111,7 @@ function LoginModal({ onClose }: { onClose: () => void }) {
             <p className="text-xs font-black uppercase tracking-[0.18em] text-[#635bff]">Compas holder access</p>
             <h2 id="login-title" className="mt-1 text-2xl font-black text-neutral-950">Enter the mint console</h2>
             <p className="mt-2 text-sm font-medium leading-6 text-neutral-600">
-              Connect the wallet that holds your Compas. Ownership is checked onchain against the Compas contract; nothing is signed and no transaction is sent.
+              Connect the wallet that holds your Compas, then sign a server-issued challenge. The server verifies the signature and checks Compas ownership onchain before opening the console.
             </p>
           </div>
           <button type="button" onClick={onClose} className="rounded-full border border-neutral-200 px-3 py-1 text-sm font-black text-neutral-500 hover:bg-neutral-50">×</button>
@@ -109,11 +123,11 @@ function LoginModal({ onClose }: { onClose: () => void }) {
             disabled={status !== "idle"}
             className="inline-flex h-12 items-center justify-center rounded-2xl bg-[#635bff] px-5 text-sm font-black text-white shadow-lg shadow-[#635bff]/25 transition hover:bg-[#5148ee] disabled:cursor-wait disabled:opacity-70"
           >
-            {status === "connecting" ? "Connecting wallet…" : status === "checking" ? "Checking Compas onchain…" : "Connect wallet →"}
+            {status === "connecting" ? "Connecting wallet…" : status === "signing" ? "Requesting signature…" : status === "checking" ? "Verifying signature + Compas…" : "Connect wallet →"}
           </button>
           {error ? <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold leading-5 text-red-700">{error}</p> : null}
           <p className="text-xs font-semibold leading-5 text-neutral-500">
-            Gate contract: <span className="font-black text-neutral-700">{`${COMPAS_CONTRACT.slice(0, 6)}…${COMPAS_CONTRACT.slice(-4)}`}</span> (Compas, ETH mainnet). Read-only <code>balanceOf</code> check. Session lasts 24h in this browser.
+            Gate contract: <span className="font-black text-neutral-700">{`${COMPAS_CONTRACT.slice(0, 6)}…${COMPAS_CONTRACT.slice(-4)}`}</span> (Compas, ETH mainnet). Signature proves wallet ownership; server session lasts 24h.
           </p>
         </div>
       </div>

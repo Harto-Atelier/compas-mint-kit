@@ -76,9 +76,24 @@ export function readGateSession(): CompasGateSession | null {
 export function writeGateSession(session: CompasGateSession): void {
   if (typeof window === "undefined") return;
   window.sessionStorage.setItem(COMPAS_GATE_STORAGE_KEY, serializeGateSession(session));
+  window.dispatchEvent(new Event("compas-gate-session"));
 }
 
 export function clearGateSession(): void {
   if (typeof window === "undefined") return;
   window.sessionStorage.removeItem(COMPAS_GATE_STORAGE_KEY);
+  window.dispatchEvent(new Event("compas-gate-session"));
+}
+
+export async function fetchSignedGateSession(): Promise<CompasGateSession | null> {
+  const response = await fetch("/api/auth/session", { credentials: "same-origin" });
+  if (!response.ok) return null;
+  const json = (await response.json()) as { address?: unknown; compasCount?: unknown; verifiedAt?: unknown };
+  if (typeof json.address !== "string" || !isEthAddress(json.address) || typeof json.compasCount !== "number" || typeof json.verifiedAt !== "number") return null;
+  return { address: json.address, compasCount: json.compasCount, verifiedAt: json.verifiedAt };
+}
+
+export async function clearSignedGateSession(): Promise<void> {
+  await fetch("/api/auth/session", { method: "DELETE", credentials: "same-origin" }).catch(() => null);
+  clearGateSession();
 }
