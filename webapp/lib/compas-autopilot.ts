@@ -1,5 +1,7 @@
 import type { OpportunityCandidate, OpportunityScanResult } from "./opportunity-scan";
 
+export const COMPAS_AUTOPILOT_HANDOFF_KEY = "compas.autopilotHandoff.v1";
+
 export interface CompasAutopilotPolicy {
   enabled: boolean;
   mode: "auto-propose" | "auto-simulate";
@@ -39,6 +41,22 @@ export interface CompasAutopilotProposal {
   };
   checklist: { label: string; ok: boolean }[];
   blockedReasons: string[];
+}
+
+export interface CompasAutopilotHandoff {
+  schemaVersion: "compas-autopilot-handoff.v1";
+  createdAt: string;
+  proposal: CompasAutopilotProposal;
+  signerDefaults: {
+    chain: string;
+    collectionAddress: string;
+    quantity: number;
+    recipientMode: "holder";
+    holderRecipientAddress?: string;
+    maxTotalEth: number;
+    maxGasGwei: number;
+  };
+  safety: CompasAutopilotProposal["safety"];
 }
 
 export function defaultCompasAutopilotPolicy(): CompasAutopilotPolicy {
@@ -100,5 +118,23 @@ export function buildCompasAutopilotProposal(input: {
     },
     checklist,
     blockedReasons,
+  };
+}
+
+export function buildCompasAutopilotHandoff(proposal: CompasAutopilotProposal, now = new Date()): CompasAutopilotHandoff {
+  return {
+    schemaVersion: "compas-autopilot-handoff.v1",
+    createdAt: now.toISOString(),
+    proposal,
+    signerDefaults: {
+      chain: proposal.candidate.chain,
+      collectionAddress: proposal.candidate.address,
+      quantity: proposal.proposedPlan.quantity,
+      recipientMode: "holder",
+      holderRecipientAddress: proposal.recipient.address,
+      maxTotalEth: proposal.proposedPlan.maxTotalEth,
+      maxGasGwei: proposal.proposedPlan.maxGasGwei,
+    },
+    safety: proposal.safety,
   };
 }

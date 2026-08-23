@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildCompasAutopilotProposal, defaultCompasAutopilotPolicy } from "./compas-autopilot";
+import { buildCompasAutopilotHandoff, buildCompasAutopilotProposal, defaultCompasAutopilotPolicy } from "./compas-autopilot";
 import type { OpportunityScanResult } from "./opportunity-scan";
 
 const readyScan: OpportunityScanResult = {
@@ -52,4 +52,20 @@ test("Compas autopilot blocks holder recipient without verified Compas session",
 test("Compas autopilot returns no proposal when disabled", () => {
   const policy = { ...defaultCompasAutopilotPolicy(), enabled: false };
   assert.equal(buildCompasAutopilotProposal({ scan: readyScan, policy }), null);
+});
+
+test("Compas autopilot handoff preserves no-broadcast safety and signer defaults", () => {
+  const proposal = buildCompasAutopilotProposal({
+    scan: readyScan,
+    policy: defaultCompasAutopilotPolicy(),
+    holderAddress: "0x3333333333333333333333333333333333333333",
+    now: new Date("2026-08-23T00:00:00.000Z"),
+  });
+  assert.ok(proposal);
+  const handoff = buildCompasAutopilotHandoff(proposal, new Date("2026-08-23T00:01:00.000Z"));
+  assert.equal(handoff.schemaVersion, "compas-autopilot-handoff.v1");
+  assert.equal(handoff.signerDefaults.recipientMode, "holder");
+  assert.equal(handoff.signerDefaults.collectionAddress, "0x1111111111111111111111111111111111111111");
+  assert.equal(handoff.safety.broadcast, false);
+  assert.equal(handoff.safety.requiresManualBroadcast, true);
 });

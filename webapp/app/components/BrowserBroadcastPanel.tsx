@@ -25,6 +25,7 @@ import {
 } from "@/lib/browser-broadcast";
 import type { CollectionCard, MintStage, StageKind } from "@/lib/mint-types";
 import { fetchSignedGateSession, type CompasGateSession } from "@/lib/compas-gate";
+import { COMPAS_AUTOPILOT_HANDOFF_KEY, type CompasAutopilotHandoff } from "@/lib/compas-autopilot";
 
 const FIELD = "h-11 rounded-2xl border border-violet-100 bg-white px-3 text-sm font-bold text-slate-950 outline-none shadow-sm placeholder:text-slate-400 focus:border-violet-300 focus:ring-4 focus:ring-violet-100";
 const CHAINS: BrowserBroadcastChainKey[] = ["ethereum", "base", "robinhood"];
@@ -49,12 +50,13 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages, 
   const [error, setError] = useState<string | null>(null);
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   const [broadcastConsent, setBroadcastConsent] = useState(false);
-  const [maxFeeGwei, setMaxFeeGwei] = useState(0.08);
+  const [autopilotHandoff, setAutopilotHandoff] = useState<CompasAutopilotHandoff | null>(() => readAutopilotHandoff());
+  const [maxFeeGwei, setMaxFeeGwei] = useState(() => autopilotHandoff?.signerDefaults.maxGasGwei ?? 0.08);
   const [priorityFeeGwei, setPriorityFeeGwei] = useState(0.02);
   const [retryLimit, setRetryLimit] = useState(2);
   const [escalationPercent, setEscalationPercent] = useState(15);
   const [nonceMode, setNonceMode] = useState<"sequential" | "parallel">("sequential");
-  const [recipientMode, setRecipientMode] = useState<BrowserMintRecipientMode>("payer");
+  const [recipientMode, setRecipientMode] = useState<BrowserMintRecipientMode>(() => autopilotHandoff ? "holder" : "payer");
   const [customRecipientAddress, setCustomRecipientAddress] = useState("");
   const [holderSession, setHolderSession] = useState<CompasGateSession | null>(null);
 
@@ -220,6 +222,11 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages, 
     setError(null);
   }
 
+  function clearAutopilotHandoff() {
+    window.localStorage.removeItem(COMPAS_AUTOPILOT_HANDOFF_KEY);
+    setAutopilotHandoff(null);
+  }
+
   return (
     <section className="rounded-[2rem] border border-amber-200 bg-amber-50/75 p-5 shadow-sm">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -240,6 +247,14 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages, 
       {notice ? <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-800">{notice}</div> : null}
       {error ? <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">{error}</div> : null}
       {busy ? <div className="mt-4 rounded-2xl border border-violet-200 bg-violet-50 p-3 text-sm font-black text-violet-700">{busy}</div> : null}
+      {autopilotHandoff ? (
+        <div id="browser-signer" className="mt-4 rounded-2xl border border-fuchsia-200 bg-fuchsia-50 p-3 text-sm font-bold text-fuchsia-800">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p>Autopilot handoff loaded: {autopilotHandoff.proposal.candidate.name} · recipient holder · max {autopilotHandoff.signerDefaults.maxTotalEth} ETH. Simulate manually before any broadcast.</p>
+            <button type="button" onClick={clearAutopilotHandoff} className="rounded-full bg-white px-3 py-1 text-xs font-black text-fuchsia-700">Clear handoff</button>
+          </div>
+        </div>
+      ) : null}
 
       <div className="mt-5 grid gap-4 lg:grid-cols-[0.75fr_1.25fr]">
         <form onSubmit={handleUnlock} className="rounded-3xl border border-amber-200 bg-white/80 p-4">
@@ -428,6 +443,16 @@ function readStoredVaultBackup(): EncryptedLaunchVaultBackup | null {
     const raw = window.localStorage.getItem(LAUNCH_VAULT_STORAGE_KEY);
     // Loads encrypted vault backup only; plaintext private keys never enter storage.
     return raw ? parseEncryptedLaunchVaultBackup(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function readAutopilotHandoff(): CompasAutopilotHandoff | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(COMPAS_AUTOPILOT_HANDOFF_KEY) ?? "null") as Partial<CompasAutopilotHandoff> | null;
+    return parsed?.schemaVersion === "compas-autopilot-handoff.v1" ? (parsed as CompasAutopilotHandoff) : null;
   } catch {
     return null;
   }

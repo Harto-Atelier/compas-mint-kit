@@ -1,9 +1,10 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { OpportunityScanResult } from "@/lib/opportunity-scan";
 import { fetchSignedGateSession, type CompasGateSession } from "@/lib/compas-gate";
-import { buildCompasAutopilotProposal, defaultCompasAutopilotPolicy, type CompasAutopilotPolicy } from "@/lib/compas-autopilot";
+import { buildCompasAutopilotHandoff, buildCompasAutopilotProposal, COMPAS_AUTOPILOT_HANDOFF_KEY, defaultCompasAutopilotPolicy, type CompasAutopilotPolicy } from "@/lib/compas-autopilot";
 
 const WATCHLIST_KEY = "compas.opportunityWatchlist.v1";
 const WATCHLIST_META_KEY = "compas.opportunityWatchlistMeta.v1";
@@ -245,6 +246,19 @@ export default function OpportunityWatchPanel({ embedded = false }: { embedded?:
 }
 
 function AutopilotPanel({ holderAddress, policy, proposal, setPolicy }: { holderAddress?: string; policy: CompasAutopilotPolicy; proposal: ReturnType<typeof buildCompasAutopilotProposal>; setPolicy: (policy: CompasAutopilotPolicy) => void }) {
+  const router = useRouter();
+  function exportProposal() {
+    if (!proposal) return;
+    downloadText(`compas-autopilot-proposal-${Date.now()}.json`, `${JSON.stringify(proposal, null, 2)}\n`, "application/json");
+  }
+
+  function sendToSigner() {
+    if (!proposal) return;
+    const handoff = buildCompasAutopilotHandoff(proposal);
+    window.localStorage.setItem(COMPAS_AUTOPILOT_HANDOFF_KEY, JSON.stringify(handoff));
+    router.push("/app?tab=Mints#browser-signer");
+  }
+
   return (
     <section className="mt-4 rounded-3xl border border-fuchsia-200 bg-fuchsia-50/70 p-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -276,6 +290,10 @@ function AutopilotPanel({ holderAddress, policy, proposal, setPolicy }: { holder
           <p className="mt-1 text-xs font-bold text-slate-600">Qty {proposal.proposedPlan.quantity} · max {proposal.proposedPlan.maxTotalEth} ETH · recipient {proposal.recipient.status}</p>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {proposal.checklist.map((item) => <span key={item.label} className={`rounded-2xl border px-3 py-2 text-xs font-black ${item.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>{item.ok ? "✓" : "○"} {item.label}</span>)}
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <button type="button" onClick={exportProposal} className="rounded-2xl border border-fuchsia-200 bg-fuchsia-50 px-4 py-3 text-xs font-black uppercase tracking-[0.14em] text-fuchsia-700">Export proposal</button>
+            <button type="button" onClick={sendToSigner} disabled={proposal.proposedPlan.nextStep !== "simulate-in-browser"} className="rounded-2xl bg-slate-950 px-4 py-3 text-xs font-black uppercase tracking-[0.14em] text-white disabled:cursor-not-allowed disabled:opacity-50">Send to signer</button>
           </div>
         </div>
       ) : <p className="mt-3 rounded-2xl border border-dashed border-fuchsia-200 bg-white/70 p-3 text-xs font-bold text-slate-500">Run a scan to generate an autopilot proposal.</p>}
