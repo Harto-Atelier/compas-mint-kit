@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AcoPanel, DispersePanel } from "@/app/components/DisperseAcoPanels";
+import { DispersePanel } from "@/app/components/DisperseAcoPanels";
 import MintConsole from "@/app/components/MintConsole";
 import RunReportViewer from "@/app/components/RunReportViewer";
 import LaunchVaultConsole from "@/app/LaunchVaultConsole";
@@ -10,9 +10,9 @@ import { usePlannerStore } from "@/app/components/PlannerStoreProvider";
 import { countUnlockedVaultWallets } from "@/lib/planner-store";
 import CompasGate from "@/components/CompasGate";
 
-export type MainTab = "Mints" | "Wallets" | "Vault" | "Disperse" | "ACO" | "Reports";
+export type MainTab = "Mints" | "Wallets" | "Vault" | "Disperse" | "Reports";
 
-const mainTabs: MainTab[] = ["Mints", "Wallets", "Vault", "Disperse", "ACO", "Reports"];
+const mainTabs: MainTab[] = ["Mints", "Wallets", "Vault", "Disperse", "Reports"];
 
 const DOCS_URL = "https://github.com/Harto-Atelier/compas-mint-kit#readme";
 
@@ -36,11 +36,6 @@ const tabCopy: Record<MainTab, { eyebrow: string; title: string; body: string }>
     eyebrow: "Funding prep",
     title: "Draft safe funding routes.",
     body: "Prepare read-only disperse plans with clear before-signing checks and no hidden execution path.",
-  },
-  ACO: {
-    eyebrow: "Automation",
-    title: "No unattended execution.",
-    body: "This console runs no watchers or bots; execution happens only via the exported run config on a local CLI.",
   },
   Reports: {
     eyebrow: "CLI run report",
@@ -214,6 +209,35 @@ function StatusRow({ activeLaunchId }: { activeLaunchId: string }) {
   );
 }
 
+function OperatorFlow({ active, setActive }: { active: MainTab; setActive: (tab: MainTab) => void }) {
+  const steps: Array<{ tab: MainTab; label: string; detail: string }> = [
+    { tab: "Mints", label: "Drop", detail: "Paste collection" },
+    { tab: "Wallets", label: "Wallets", detail: "Stage addresses" },
+    { tab: "Vault", label: "Vault", detail: "Unlock burners" },
+    { tab: "Reports", label: "Review", detail: "Receipts + txs" },
+  ];
+
+  return (
+    <section className="grid gap-2 rounded-[1.75rem] border border-slate-200/80 bg-white/88 p-3 shadow-sm backdrop-blur sm:grid-cols-4">
+      {steps.map((step, index) => (
+        <button
+          key={step.tab}
+          type="button"
+          onClick={() => setActive(step.tab)}
+          className={cx(
+            "rounded-2xl border px-3 py-3 text-left transition",
+            active === step.tab ? "border-violet-300 bg-violet-600 text-white shadow-[0_14px_32px_rgba(124,58,237,0.22)]" : "border-slate-200 bg-white text-slate-700 hover:border-violet-200 hover:bg-violet-50",
+          )}
+        >
+          <p className={cx("text-[10px] font-black uppercase tracking-[0.18em]", active === step.tab ? "text-violet-100" : "text-slate-400")}>0{index + 1}</p>
+          <p className="mt-1 text-sm font-black">{step.label}</p>
+          <p className={cx("mt-1 text-xs font-semibold", active === step.tab ? "text-violet-100" : "text-slate-500")}>{step.detail}</p>
+        </button>
+      ))}
+    </section>
+  );
+}
+
 function MainPanel({ active }: { active: MainTab }) {
   if (active === "Mints") {
     return <MintConsole embedded />;
@@ -234,8 +258,7 @@ function MainPanel({ active }: { active: MainTab }) {
   if (active === "Reports") {
     return <RunReportViewer embedded />;
   }
-
-  return <AcoPanel embedded />;
+  return <RunReportViewer embedded />;
 }
 
 function formatLaunchId(activeLaunchId: string): string {
@@ -263,6 +286,7 @@ export default function MintConsoleShell({ initialTab = "Mints" }: { initialTab?
           <div className="grid min-w-0 gap-5">
             <ReportStrip stagedWallets={wallets.length} savedSchedules={savedSchedules} unlockedVaultWallets={unlockedVaultWallets} />
             <StatusRow activeLaunchId={activeLaunchId} />
+            <OperatorFlow active={activeTab} setActive={setActiveTab} />
             <div className="rounded-[1.5rem] border border-violet-200/70 bg-violet-50/75 px-4 py-3 text-sm font-bold text-violet-800 backdrop-blur">
               Active module: <span className="font-black">{activeTab}</span> · {tabSummary}
             </div>

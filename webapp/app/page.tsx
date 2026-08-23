@@ -154,6 +154,56 @@ function Art({ kind }: { kind: string }) {
   return <div className="mx-auto w-36 rotate-[-3deg] rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm"><div className="grid gap-2 text-sm font-black text-neutral-700"><span>🌿 Mints</span><span>▣ Wallets</span><span>⇄ Disperse</span><span>◇ Reports</span></div></div>;
 }
 
+function ProductPreview() {
+  return (
+    <div className="relative mx-auto mt-8 w-full max-w-5xl lg:mt-0">
+      <div className="absolute -inset-6 rounded-[3rem] bg-[#635bff]/10 blur-3xl" />
+      <div className="relative overflow-hidden rounded-[2rem] border border-neutral-200 bg-neutral-950 p-3 text-left shadow-2xl shadow-neutral-950/20 sm:rounded-[2.5rem] sm:p-4">
+        <div className="flex items-center justify-between border-b border-white/10 px-2 pb-3 text-xs font-black text-white/60">
+          <span>Compas Mint Kit</span>
+          <span className="rounded-full bg-emerald-400/15 px-3 py-1 text-emerald-200">Read-only until broadcast</span>
+        </div>
+        <div className="grid gap-3 pt-3 lg:grid-cols-[150px_minmax(0,1fr)]">
+          <div className="grid grid-cols-4 gap-2 lg:grid-cols-1">
+            {["Mints", "Wallets", "Vault", "Reports"].map((tab, index) => (
+              <div key={tab} className={`rounded-2xl px-3 py-3 text-xs font-black ${index === 0 ? "bg-[#635bff] text-white" : "bg-white/8 text-white/65"}`}>
+                {tab}
+              </div>
+            ))}
+          </div>
+          <div className="rounded-[1.5rem] bg-white p-4 text-neutral-950">
+            <div className="flex flex-col gap-3 border-b border-neutral-200 pb-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[#635bff]">Mint flow</p>
+                <h2 className="mt-1 text-2xl font-black tracking-tight">Drop → Wallets → Simulate → Send</h2>
+              </div>
+              <span className="rounded-full bg-neutral-950 px-4 py-2 text-xs font-black text-white">Sim first</span>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-4">
+              {["Collection", "Vault", "Gas cap", "Review"].map((item, index) => (
+                <div key={item} className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
+                  <p className="text-[10px] font-black uppercase tracking-[0.14em] text-neutral-400">0{index + 1}</p>
+                  <p className="mt-2 text-sm font-black text-neutral-900">{item}</p>
+                  <div className="mt-3 h-1.5 rounded-full bg-[#635bff]/25" />
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 rounded-2xl border border-violet-100 bg-violet-50 p-4">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.16em] text-violet-700">Operator check</p>
+                  <p className="mt-1 text-sm font-semibold text-neutral-600">Keys stay local. User signs. Server never receives secrets.</p>
+                </div>
+                <span className="hidden rounded-full bg-white px-3 py-2 text-xs font-black text-violet-700 shadow-sm sm:inline">No custody</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function LandingPage() {
   const [loginOpen, setLoginOpen] = useState(false);
 
@@ -171,14 +221,17 @@ export default function LandingPage() {
         </nav>
       </header>
 
-      <section className="mx-auto w-full max-w-[100vw] px-4 pb-6 text-center sm:px-5 lg:max-w-6xl">
-        <p className="inline-flex rounded-full border border-violet-100 bg-white px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#635bff] shadow-sm sm:text-xs sm:tracking-[0.16em]">NFT mint command center</p>
-        <h1 className="mx-auto mt-5 max-w-full text-balance break-words text-[2.35rem] font-black leading-[0.9] tracking-[-0.075em] text-neutral-950 [overflow-wrap:anywhere] min-[390px]:text-5xl sm:text-6xl">Mint faster without giving up control.</h1>
-        <p className="mx-auto mt-4 max-w-md text-pretty text-sm font-medium leading-6 text-neutral-600 sm:text-base sm:leading-7">Compas Mint Kit turns the morsyxbt mint flow into a polished operator console: encrypted launch vaults, wallet staging, simulation-first execution, and real reports.</p>
-        <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <button type="button" onClick={() => setLoginOpen(true)} className="min-h-11 rounded-full bg-[#635bff] px-6 py-3 text-sm font-black text-white shadow-lg shadow-[#635bff]/20 hover:bg-[#5148ee]">Login / Launch App</button>
-          <a href="https://github.com/Harto-Atelier/compas-mint-kit#readme" target="_blank" rel="noreferrer" className="min-h-11 rounded-full border border-neutral-200 bg-white px-6 py-3 text-sm font-black text-neutral-700 shadow-sm hover:border-neutral-300">Docs</a>
+      <section className="mx-auto grid w-full max-w-[100vw] gap-8 px-4 pb-8 sm:px-5 lg:max-w-6xl lg:grid-cols-[0.78fr_1fr] lg:items-center lg:pb-14">
+        <div className="text-center lg:text-left">
+          <p className="inline-flex rounded-full border border-violet-100 bg-white px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#635bff] shadow-sm sm:text-xs sm:tracking-[0.16em]">NFT mint command center</p>
+          <h1 className="mt-5 max-w-full text-balance break-words text-[2.35rem] font-black leading-[0.9] tracking-[-0.075em] text-neutral-950 [overflow-wrap:anywhere] min-[390px]:text-5xl sm:text-6xl lg:text-7xl">Mint faster without giving up control.</h1>
+          <p className="mt-4 max-w-md text-pretty text-sm font-medium leading-6 text-neutral-600 sm:text-base sm:leading-7 lg:mx-0">Compas Mint Kit turns the morsyxbt mint flow into a polished operator console: encrypted launch vaults, wallet staging, simulation-first execution, and real reports.</p>
+          <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:max-w-md">
+            <button type="button" onClick={() => setLoginOpen(true)} className="min-h-11 rounded-full bg-[#635bff] px-6 py-3 text-sm font-black text-white shadow-lg shadow-[#635bff]/20 hover:bg-[#5148ee]">Login / Launch App</button>
+            <a href="https://github.com/Harto-Atelier/compas-mint-kit#readme" target="_blank" rel="noreferrer" className="min-h-11 rounded-full border border-neutral-200 bg-white px-6 py-3 text-center text-sm font-black text-neutral-700 shadow-sm hover:border-neutral-300">Docs</a>
+          </div>
         </div>
+        <ProductPreview />
       </section>
 
       <div className="mx-auto grid w-full max-w-[100vw] grid-cols-1 gap-2 px-4 pb-4 text-center text-xs font-black min-[390px]:grid-cols-3 sm:px-5 lg:max-w-4xl">
