@@ -39,6 +39,15 @@ const featureCards = [
   },
 ];
 
+const faqs = [
+  { q: "Who can enter?", a: "Wallets holding at least one Compas. Login requires a wallet signature plus an onchain holder check." },
+  { q: "Does the server store keys?", a: "No. Launch vault encryption and unlock happen in the browser. Use burner wallets and rotate keys per launch." },
+  { q: "Can it mint from the browser?", a: "Yes, only after vault unlock, transaction preparation, simulation, spend caps, and an explicit broadcast confirmation." },
+  { q: "What chains are supported?", a: "Ethereum and Base planning are wired. Robinhood Chain stays blocked unless an operator supplies the real RPC and SeaDrop address." },
+  { q: "Is this custody?", a: "No custody. The app never asks for seed phrases and never sends plaintext keys to a server. Keys stay local while unlocked." },
+  { q: "What should I use it for now?", a: "Prepare a drop, stage wallets, seal launch burners, simulate execution, and review reports. Real mainnet canary still needs explicit approval." },
+];
+
 function Brand() {
   return (
     <Link href="/" className="flex items-center gap-2" aria-label="Compas Mint Kit home">
@@ -215,7 +224,7 @@ export default function LandingPage() {
           <button type="button" onClick={() => setLoginOpen(true)} className="rounded-full bg-[#635bff] px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-[#5148ee] sm:hidden">Launch →</button>
         </div>
         <nav className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:items-center">
-          <a href="#pricing" className="rounded-full border border-neutral-200 bg-white px-4 py-2 text-center text-sm font-semibold shadow-sm hover:border-neutral-300">Pricing</a>
+          <a href="#access" className="rounded-full border border-neutral-200 bg-white px-4 py-2 text-center text-sm font-semibold shadow-sm hover:border-neutral-300">Access</a>
           <a href="#faq" className="rounded-full border border-neutral-200 bg-white px-4 py-2 text-center text-sm font-semibold shadow-sm hover:border-neutral-300">FAQ</a>
           <button type="button" onClick={() => setLoginOpen(true)} className="col-span-2 hidden rounded-full bg-[#635bff] px-5 py-2 text-sm font-bold text-white shadow-sm hover:bg-[#5148ee] sm:block">Launch App →</button>
         </nav>
@@ -250,21 +259,41 @@ export default function LandingPage() {
         ))}
       </section>
 
-      <section id="pricing" className="mx-auto w-full max-w-[100vw] px-4 pb-6 sm:px-5 lg:max-w-3xl">
-        <div className="rounded-[0.35rem] border border-neutral-200 bg-white p-5 shadow-sm">
-          <h2 className="text-2xl font-black tracking-tight">Access model</h2>
-          <p className="mt-2 text-sm font-medium leading-6 text-neutral-600">Access is gated by a signed Compas holder check. The console opens only after wallet proof and an onchain balance read.</p>
+      <section id="access" className="mx-auto w-full max-w-[100vw] px-4 pb-6 sm:px-5 lg:max-w-6xl">
+        <div className="grid overflow-hidden rounded-[2rem] border border-neutral-200 bg-white shadow-sm lg:grid-cols-[0.8fr_1.2fr]">
+          <div className="border-b border-neutral-200 p-6 lg:border-b-0 lg:border-r">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-[#635bff]">Access model</p>
+            <h2 className="mt-2 text-3xl font-black tracking-tight text-neutral-950">Holder-gated operator console.</h2>
+            <p className="mt-3 text-sm font-medium leading-6 text-neutral-600">The public landing is open. The app shell is protected by wallet proof and Compas ownership. No wallet signature, no entry.</p>
+          </div>
+          <div className="grid gap-3 p-4 sm:grid-cols-3 sm:p-6">
+            {[
+              ["Proof", "Sign a fresh login challenge."],
+              ["Ownership", "Server reads Compas balance onchain."],
+              ["Session", "24h httpOnly access cookie."],
+            ].map(([title, body]) => (
+              <div key={title} className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
+                <p className="text-sm font-black text-neutral-950">{title}</p>
+                <p className="mt-2 text-xs font-semibold leading-5 text-neutral-600">{body}</p>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
-      <section id="faq" className="mx-auto w-full max-w-[100vw] px-4 pb-12 sm:px-5 lg:max-w-3xl">
-        <div className="rounded-[0.35rem] border border-neutral-200 bg-white p-5 shadow-sm">
-          <h2 className="text-2xl font-black tracking-tight">FAQ</h2>
-          <dl className="mt-4 grid gap-4 text-sm">
-            <div><dt className="font-black">Does the server store keys?</dt><dd className="mt-1 font-medium leading-6 text-neutral-600">No. Vault encryption/decryption happens in the browser. Use burner wallets and rotate per launch.</dd></div>
-            <div><dt className="font-black">Can it broadcast?</dt><dd className="mt-1 font-medium leading-6 text-neutral-600">Only after vault unlock, transaction preparation, dry-run simulation, and an explicit broadcast modal.</dd></div>
-          </dl>
+      <section id="faq" className="mx-auto w-full max-w-[100vw] px-4 pb-12 sm:px-5 lg:max-w-6xl">
+        <div className="mb-5 flex flex-col gap-2 text-center lg:text-left">
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-[#635bff]">FAQ</p>
+          <h2 className="text-3xl font-black tracking-tight text-neutral-950">Straight answers before funds move.</h2>
         </div>
+        <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {faqs.map((item) => (
+            <div key={item.q} className="rounded-[1.5rem] border border-neutral-200 bg-white p-5 shadow-sm">
+              <dt className="text-base font-black text-neutral-950">{item.q}</dt>
+              <dd className="mt-2 text-sm font-medium leading-6 text-neutral-600">{item.a}</dd>
+            </div>
+          ))}
+        </dl>
       </section>
 
       <footer className="mx-auto flex w-full max-w-[100vw] flex-col gap-2 px-4 pb-10 text-xs font-semibold text-neutral-500 sm:flex-row sm:items-center sm:justify-between sm:px-5 lg:max-w-6xl">
