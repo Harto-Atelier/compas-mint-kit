@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { OpportunityScanResult } from "@/lib/opportunity-scan";
 import { fetchSignedGateSession, type CompasGateSession } from "@/lib/compas-gate";
 import { buildCompasAutopilotHandoff, buildCompasAutopilotProposal, COMPAS_AUTOPILOT_HANDOFF_KEY, defaultCompasAutopilotPolicy, type CompasAutopilotPolicy } from "@/lib/compas-autopilot";
+import { buildCompasMadnessPlan, COMPAS_MADNESS_PLAN_KEY, defaultCompasMadnessPolicy, type CompasMadnessPolicy } from "@/lib/compas-madness";
 
 const WATCHLIST_KEY = "compas.opportunityWatchlist.v1";
 const WATCHLIST_META_KEY = "compas.opportunityWatchlistMeta.v1";
@@ -27,11 +28,13 @@ export default function OpportunityWatchPanel({ embedded = false }: { embedded?:
   const [error, setError] = useState<string | null>(null);
   const [holderSession, setHolderSession] = useState<CompasGateSession | null>(null);
   const [autopilotPolicy, setAutopilotPolicy] = useState<CompasAutopilotPolicy>(() => defaultCompasAutopilotPolicy());
+  const [madnessPolicy, setMadnessPolicy] = useState<CompasMadnessPolicy>(() => defaultCompasMadnessPolicy());
 
   const canScan = watchlist.length > 0 && !busy;
   const topCandidate = useMemo(() => scan?.candidates[0], [scan]);
   const selectedCandidate = scan?.candidates.find((candidate) => candidate.query === selectedQuery) ?? topCandidate;
   const autopilotProposal = useMemo(() => buildCompasAutopilotProposal({ scan, policy: autopilotPolicy, holderAddress: holderSession?.address }), [scan, autopilotPolicy, holderSession]);
+  const madnessPlan = useMemo(() => buildCompasMadnessPlan({ proposal: autopilotProposal, policy: madnessPolicy }), [autopilotProposal, madnessPolicy]);
 
   useEffect(() => {
     fetchSignedGateSession().then(setHolderSession).catch(() => setHolderSession(null));
@@ -221,6 +224,7 @@ export default function OpportunityWatchPanel({ embedded = false }: { embedded?:
           ) : <p className="mt-4 rounded-3xl border border-dashed border-violet-200 bg-violet-50/60 p-6 text-center text-sm font-semibold text-slate-500">Run a scan to see ranked opportunities.</p>}
 
           <AutopilotPanel policy={autopilotPolicy} setPolicy={setAutopilotPolicy} proposal={autopilotProposal} holderAddress={holderSession?.address} />
+          <MadnessPanel policy={madnessPolicy} setPolicy={setMadnessPolicy} plan={madnessPlan} />
 
           {selectedCandidate ? <CandidateDetail candidate={selectedCandidate} meta={meta[selectedCandidate.query]} /> : null}
 
@@ -301,6 +305,65 @@ function AutopilotPanel({ holderAddress, policy, proposal, setPolicy }: { holder
           </div>
         </div>
       ) : <p className="mt-3 rounded-2xl border border-dashed border-fuchsia-200 bg-white/70 p-3 text-xs font-bold text-slate-500">Run a scan to generate an autopilot proposal.</p>}
+    </section>
+  );
+}
+
+function MadnessPanel({ policy, plan, setPolicy }: { policy: CompasMadnessPolicy; plan: ReturnType<typeof buildCompasMadnessPlan>; setPolicy: (policy: CompasMadnessPolicy) => void }) {
+  function exportMadness() {
+    if (!plan) return;
+    downloadText(`compas-madness-plan-${Date.now()}.json`, `${JSON.stringify(plan, null, 2)}\n`, "application/json");
+  }
+
+  function saveMadness() {
+    if (!plan) return;
+    window.localStorage.setItem(COMPAS_MADNESS_PLAN_KEY, JSON.stringify(plan));
+  }
+
+  return (
+    <section className="mt-4 rounded-3xl border border-red-200 bg-red-50/70 p-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-red-700">Compas Madness</p>
+          <h3 className="mt-1 text-lg font-black text-slate-950">Quantity goes wild. Funds do not.</h3>
+          <p className="mt-1 text-xs font-bold text-slate-600">Set quantity and profit target. The plan can propose mint batches and OpenSea listing prices, but mint broadcast and listing signatures stay manual/locked.</p>
+        </div>
+        <label className="flex items-center gap-2 rounded-full bg-white px-3 py-2 text-xs font-black text-red-700">
+          <input type="checkbox" checked={policy.enabled} onChange={(event) => setPolicy({ ...policy, enabled: event.target.checked })} /> Enabled
+        </label>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-4">
+        <input aria-label="Madness quantity" type="number" value={policy.quantity} onChange={(event) => setPolicy({ ...policy, quantity: Number(event.target.value) })} className={FIELD} />
+        <input aria-label="Madness max total ETH" type="number" step="0.001" value={policy.maxTotalEth} onChange={(event) => setPolicy({ ...policy, maxTotalEth: Number(event.target.value) })} className={FIELD} />
+        <input aria-label="Madness max gas ETH" type="number" step="0.001" value={policy.maxGasEth} onChange={(event) => setPolicy({ ...policy, maxGasEth: Number(event.target.value) })} className={FIELD} />
+        <input aria-label="Target profit percent" type="number" value={policy.targetProfitPercent} onChange={(event) => setPolicy({ ...policy, targetProfitPercent: Number(event.target.value) })} className={FIELD} />
+        <input aria-label="Minimum listing ETH" type="number" step="0.001" value={policy.minimumListingEth} onChange={(event) => setPolicy({ ...policy, minimumListingEth: Number(event.target.value) })} className={FIELD} />
+        <input aria-label="Marketplace fee percent" type="number" step="0.1" value={policy.marketplaceFeePercent} onChange={(event) => setPolicy({ ...policy, marketplaceFeePercent: Number(event.target.value) })} className={FIELD} />
+        <input aria-label="Royalty percent" type="number" step="0.1" value={policy.royaltyPercent} onChange={(event) => setPolicy({ ...policy, royaltyPercent: Number(event.target.value) })} className={FIELD} />
+        <select value={policy.mode} onChange={(event) => setPolicy({ ...policy, mode: event.target.value as CompasMadnessPolicy["mode"] })} className={FIELD}>
+          <option value="preview">madness preview</option>
+          <option value="madness-canary">madness canary: 1 tx</option>
+          <option value="full-madness-locked">full madness locked</option>
+        </select>
+      </div>
+      {plan ? (
+        <div className="mt-3 rounded-2xl border border-red-200 bg-white p-3">
+          <div className="grid gap-2 sm:grid-cols-4">
+            <Metric label="Qty" value={`${plan.mintPlan.executableQuantity}/${plan.mintPlan.requestedQuantity}`} />
+            <Metric label="Max spend" value={`${plan.mintPlan.maxTotalEth} ETH`} />
+            <Metric label="List target" value={`${plan.listingPlan.suggestedListPriceEth} ETH`} />
+            <Metric label="Profit est." value={`${plan.listingPlan.estimatedProfitEth} ETH`} />
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {plan.checklist.map((item) => <span key={item.label} className={`rounded-2xl border px-3 py-2 text-xs font-black ${item.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>{item.ok ? "✓" : "○"} {item.label}</span>)}
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <button type="button" onClick={exportMadness} className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-black uppercase tracking-[0.14em] text-red-700">Export madness</button>
+            <button type="button" onClick={saveMadness} className="rounded-2xl bg-slate-950 px-4 py-3 text-xs font-black uppercase tracking-[0.14em] text-white">Save madness plan</button>
+          </div>
+          <p className="mt-3 rounded-2xl bg-slate-50 p-3 text-xs font-bold text-slate-600">OpenSea listing is suggest/manual-review only: no Seaport order is signed, posted, or auto-listed from this preview.</p>
+        </div>
+      ) : <p className="mt-3 rounded-2xl border border-dashed border-red-200 bg-white/70 p-3 text-xs font-bold text-slate-500">Run scan + autopilot first to generate a madness plan.</p>}
     </section>
   );
 }
