@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { DispersePanel } from "@/app/components/DisperseAcoPanels";
 import MintConsole from "@/app/components/MintConsole";
+import OpportunityWatchPanel from "@/app/components/OpportunityWatchPanel";
 import RunReportViewer from "@/app/components/RunReportViewer";
 import LaunchVaultConsole from "@/app/LaunchVaultConsole";
 import WalletConsole from "@/app/WalletConsole";
@@ -10,9 +11,9 @@ import { usePlannerStore } from "@/app/components/PlannerStoreProvider";
 import { countUnlockedVaultWallets } from "@/lib/planner-store";
 import CompasGate from "@/components/CompasGate";
 
-export type MainTab = "Mints" | "Wallets" | "Vault" | "Disperse" | "Reports";
+export type MainTab = "Mints" | "Watch" | "Wallets" | "Vault" | "Disperse" | "Reports";
 
-const mainTabs: MainTab[] = ["Mints", "Wallets", "Vault", "Disperse", "Reports"];
+const mainTabs: MainTab[] = ["Mints", "Watch", "Wallets", "Vault", "Disperse", "Reports"];
 
 const DOCS_URL = "https://github.com/Harto-Atelier/compas-mint-kit#readme";
 
@@ -21,6 +22,11 @@ const tabCopy: Record<MainTab, { eyebrow: string; title: string; body: string }>
     eyebrow: "Mint command",
     title: "Plan the drop before anything signs.",
     body: "Discover collections and stages, set wallets and gas assumptions, and save a read-only schedule preview.",
+  },
+  Watch: {
+    eyebrow: "Opportunity scan",
+    title: "Rank drops before you spend attention.",
+    body: "Maintain a local watchlist and run preview-only scans that never sign, custody, or broadcast.",
   },
   Wallets: {
     eyebrow: "Wallet desk",
@@ -212,13 +218,14 @@ function StatusRow({ activeLaunchId }: { activeLaunchId: string }) {
 function OperatorFlow({ active, setActive }: { active: MainTab; setActive: (tab: MainTab) => void }) {
   const steps: Array<{ tab: MainTab; label: string; detail: string }> = [
     { tab: "Mints", label: "Drop", detail: "Paste collection" },
+    { tab: "Watch", label: "Scan", detail: "Rank drops" },
     { tab: "Wallets", label: "Wallets", detail: "Stage addresses" },
     { tab: "Vault", label: "Vault", detail: "Unlock burners" },
     { tab: "Reports", label: "Review", detail: "Receipts + txs" },
   ];
 
   return (
-    <section className="grid gap-2 rounded-[1.75rem] border border-slate-200/80 bg-white/88 p-3 shadow-sm backdrop-blur sm:grid-cols-4">
+    <section className="grid gap-2 rounded-[1.75rem] border border-slate-200/80 bg-white/88 p-3 shadow-sm backdrop-blur sm:grid-cols-5">
       {steps.map((step, index) => (
         <button
           key={step.tab}
@@ -241,13 +248,14 @@ function OperatorFlow({ active, setActive }: { active: MainTab; setActive: (tab:
 function MobileBottomNav({ active, setActive }: { active: MainTab; setActive: (tab: MainTab) => void }) {
   const items: Array<{ tab: MainTab; label: string }> = [
     { tab: "Mints", label: "Drop" },
+    { tab: "Watch", label: "Watch" },
     { tab: "Wallets", label: "Wallets" },
     { tab: "Vault", label: "Vault" },
     { tab: "Reports", label: "Review" },
   ];
 
   return (
-    <nav className="fixed inset-x-3 bottom-3 z-40 grid grid-cols-4 gap-1 rounded-[1.35rem] border border-slate-200/80 bg-white/92 p-1 shadow-[0_18px_60px_rgba(15,23,42,0.22)] backdrop-blur-xl lg:hidden" aria-label="Mobile operator flow">
+    <nav className="fixed inset-x-3 bottom-3 z-40 grid grid-cols-5 gap-1 rounded-[1.35rem] border border-slate-200/80 bg-white/92 p-1 shadow-[0_18px_60px_rgba(15,23,42,0.22)] backdrop-blur-xl lg:hidden" aria-label="Mobile operator flow">
       {items.map((item) => (
         <button
           key={item.tab}
@@ -268,6 +276,10 @@ function MobileBottomNav({ active, setActive }: { active: MainTab; setActive: (t
 function MainPanel({ active }: { active: MainTab }) {
   if (active === "Mints") {
     return <MintConsole embedded />;
+  }
+
+  if (active === "Watch") {
+    return <OpportunityWatchPanel embedded />;
   }
 
   if (active === "Wallets") {
