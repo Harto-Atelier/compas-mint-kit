@@ -78,6 +78,31 @@ export interface BrowserMintPlan {
   warnings: string[];
 }
 
+export interface BrowserRunReportTransaction {
+  id: string;
+  walletAlias: string;
+  walletAddress: string;
+  stageId: string;
+  stageLabel: string;
+  quantity: number;
+  status: BrowserMintStatus;
+  valueWei: string;
+  gasEstimate?: string;
+  txHash?: string;
+  explorerUrl?: string;
+  error?: string;
+}
+
+export interface BrowserRunReport {
+  schemaVersion: "browser-run-report.v1";
+  generatedAt: string;
+  source: "browser";
+  collection: { address: string; name: string };
+  chain: Pick<BrowserChainConfig, "key" | "name" | "chainId" | "explorer">;
+  summary: Record<BrowserMintStatus | "total", number>;
+  transactions: BrowserRunReportTransaction[];
+}
+
 export interface BrowserRpcProviderLike {
   call(request: BrowserPreparedMintRequest & { from: string }): Promise<string>;
   estimateGas(request: BrowserPreparedMintRequest & { from: string }): Promise<bigint>;
@@ -252,6 +277,42 @@ export async function broadcastPreparedBrowserMint(
   } catch (error) {
     return copyWithPrivateKey(tx, { status: "failed", error: safeMessageOf(error) });
   }
+}
+
+export function buildBrowserRunReport(input: {
+  collection: { address: string; name?: string | null };
+  chain: BrowserChainConfig;
+  transactions: BrowserPreparedMint[];
+  generatedAt?: string;
+}): BrowserRunReport {
+  const summary: BrowserRunReport["summary"] = { total: input.transactions.length, prepared: 0, simulated: 0, broadcast: 0, failed: 0 };
+  const transactions = input.transactions.map((tx) => {
+    summary[tx.status] += 1;
+    return {
+      id: tx.id,
+      walletAlias: tx.walletAlias,
+      walletAddress: tx.walletAddress,
+      stageId: tx.stageId,
+      stageLabel: tx.stageLabel,
+      quantity: tx.quantity,
+      status: tx.status,
+      valueWei: tx.request.value.toString(),
+      gasEstimate: tx.simulationGas,
+      txHash: tx.hash,
+      explorerUrl: tx.explorerUrl,
+      error: tx.error ? safeMessageOf(tx.error) : undefined,
+    };
+  });
+
+  return {
+    schemaVersion: "browser-run-report.v1",
+    generatedAt: input.generatedAt ?? new Date().toISOString(),
+    source: "browser",
+    collection: { address: input.collection.address, name: input.collection.name || "Browser mint run" },
+    chain: { key: input.chain.key, name: input.chain.name, chainId: input.chain.chainId, explorer: input.chain.explorer },
+    summary,
+    transactions,
+  };
 }
 
 export function explorerTxUrl(chainKey: string, hash: string): string {

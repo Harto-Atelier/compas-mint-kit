@@ -1,6 +1,6 @@
 import { Contract, Interface, JsonRpcProvider, formatEther, getAddress } from "ethers";
 import { normalizeChainKey, resolveChain } from "./chains";
-import type { ChainOption, CollectionCard, MintDiscoveryResponse, MintStage, StageStatus } from "./mint-types";
+import type { ChainOption, CollectionCard, MintDiscoveryResponse, MintDiscoverySignal, MintStage, StageStatus } from "./mint-types";
 
 const OPENSEA_FEE_RECIPIENT = "0x0000a26b00c1F0DF003000390027140000fAa719";
 export const SEADROP_ADDRESS = "0x00005EA00Ac477B1030CE78506496e8C2dE24bf5";
@@ -91,6 +91,7 @@ export async function discoverMint(input: string, chainKey?: string): Promise<Mi
   if (publicDrop.warning) warnings.push(publicDrop.warning);
 
   const stages = buildStages(collection.address, collection.chain, publicDrop.value, warnings);
+  const signals = buildDiscoverySignals(collection, stages, warnings);
 
   return {
     ok: true,
@@ -98,8 +99,43 @@ export async function discoverMint(input: string, chainKey?: string): Promise<Mi
     resolvedAt: new Date().toISOString(),
     collection,
     stages,
+    signals,
     warnings,
   };
+}
+
+function buildDiscoverySignals(collection: CollectionCard, stages: MintStage[], warnings: string[]): MintDiscoverySignal[] {
+  const publicStage = stages.find((stage) => stage.id === "public");
+  const hasExecutablePublic = publicStage?.source === "onchain-seadrop";
+  const liveStage = stages.find((stage) => stage.status === "live");
+  const upcomingStage = stages.find((stage) => stage.status === "upcoming");
+
+  return [
+    {
+      label: "Contract",
+      value: collection.source === "opensea" ? "Resolved" : "Manual",
+      state: collection.source === "fallback" ? "watch" : "ready",
+      detail: collection.source === "opensea" ? "OpenSea metadata supplied the public contract." : "Using address/RPC reads only; verify the collection manually.",
+    },
+    {
+      label: "Public mint",
+      value: hasExecutablePublic ? "Executable" : "Watch-only",
+      state: hasExecutablePublic ? "ready" : "blocked",
+      detail: hasExecutablePublic ? "SeaDrop public config, fee recipient, and calldata preview were read onchain." : "No executable public calldata was built; signed stages stay preview-only.",
+    },
+    {
+      label: "Timing",
+      value: liveStage ? "Live" : upcomingStage ? "Upcoming" : "Review",
+      state: liveStage ? "ready" : upcomingStage ? "watch" : "blocked",
+      detail: liveStage ? `${liveStage.label} is live now.` : upcomingStage ? `${upcomingStage.label} is the next visible window.` : "No usable mint window was detected.",
+    },
+    {
+      label: "Warnings",
+      value: warnings.length ? `${warnings.length}` : "Clear",
+      state: warnings.length ? "watch" : "ready",
+      detail: warnings.length ? "Review warnings before exporting or unlocking a vault." : "No discovery warnings from metadata/RPC reads.",
+    },
+  ];
 }
 
 function parseNftTarget(rawInput: string): ParsedTarget {

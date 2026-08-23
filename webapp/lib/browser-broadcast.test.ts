@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildBrowserMintPlan,
+  buildBrowserRunReport,
   broadcastPreparedBrowserMint,
   browserChainConfig,
   explorerTxUrl,
@@ -130,4 +131,38 @@ test("broadcast is impossible until simulation succeeds and explicit consent is 
   assert.equal(broadcasted.status, "broadcast");
   assert.equal(broadcasted.hash, `0x${"a".repeat(64)}`);
   assert.equal(broadcasted.explorerUrl, explorerTxUrl("base", broadcasted.hash!));
+});
+
+test("browser run report summarizes tx hashes, gas, failures, and strips private keys", async () => {
+  const plan = buildBrowserMintPlan({
+    chainKey: "base",
+    collectionAddress: COLLECTION,
+    stages: [publicStage],
+    walletCount: 1,
+    vault: unlockedVault,
+  });
+  const simulated = await simulatePreparedBrowserMint(plan.transactions[0], {
+    call: async () => "0x",
+    estimateGas: async () => BigInt(123456),
+  });
+  const broadcasted = await broadcastPreparedBrowserMint(simulated, {
+    explicitConsent: true,
+    makeWallet: () => ({ sendTransaction: async () => ({ hash: `0x${"b".repeat(64)}` }) }),
+  });
+  const failed = { ...broadcasted, id: "failed-row", status: "failed" as const, hash: undefined, explorerUrl: undefined, error: `bad key ${PRIVATE_KEY}` };
+
+  const report = buildBrowserRunReport({
+    collection: { address: COLLECTION, name: "Canary Drop" },
+    chain: plan.chain,
+    transactions: [broadcasted, failed],
+    generatedAt: "2026-08-23T00:00:00.000Z",
+  });
+
+  assert.equal(report.summary.total, 2);
+  assert.equal(report.summary.broadcast, 1);
+  assert.equal(report.summary.failed, 1);
+  assert.equal(report.transactions[0].txHash, `0x${"b".repeat(64)}`);
+  assert.equal(report.transactions[0].gasEstimate, "123456");
+  assert.equal(JSON.stringify(report).includes(PRIVATE_KEY.slice(2)), false);
+  assert.equal(report.transactions[1].error, "bad key [redacted-hex]");
 });

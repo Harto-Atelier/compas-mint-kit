@@ -12,6 +12,7 @@ import {
 } from "@/lib/encrypted-launch-vault";
 import {
   broadcastPreparedBrowserMint,
+  buildBrowserRunReport,
   browserChainConfig,
   buildBrowserMintPlan,
   simulatePreparedBrowserMint,
@@ -77,6 +78,7 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages, 
   const broadcastCount = transactions.filter((tx) => tx.status === "broadcast").length;
   const failedCount = transactions.filter((tx) => tx.status === "failed").length;
   const canOpenBroadcast = transactions.length > 0 && simulatedCount === transactions.length;
+  const canExportBrowserReport = transactions.length > 0 && transactions.some((tx) => tx.status === "broadcast" || tx.status === "failed" || tx.status === "simulated");
 
   async function handleUnlock(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -171,6 +173,25 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages, 
     else setNotice("Broadcast submitted. Track transaction status with the explorer links below.");
   }
 
+  function handleDownloadReport() {
+    const report = buildBrowserRunReport({
+      collection: { address: collection.address, name: collection.name },
+      chain,
+      transactions,
+    });
+    const json = `${JSON.stringify(report, null, 2)}\n`;
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `browser-run-report-${Date.now()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setNotice("Downloaded browser run report. It contains tx hashes, gas estimates, statuses, and no private keys.");
+  }
+
   function resetMessages() {
     setNotice(null);
     setError(null);
@@ -253,6 +274,9 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages, 
             </button>
             <button type="button" onClick={() => setBroadcastOpen(true)} disabled={!canOpenBroadcast || Boolean(busy)} className="h-12 rounded-2xl bg-slate-950 px-4 font-black text-white shadow-sm transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50">
               Open broadcast modal
+            </button>
+            <button type="button" onClick={handleDownloadReport} disabled={!canExportBrowserReport || Boolean(busy)} className="h-12 rounded-2xl border border-emerald-200 bg-white px-4 font-black text-emerald-700 shadow-sm transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 sm:col-span-3">
+              Download browser report
             </button>
           </div>
         </div>

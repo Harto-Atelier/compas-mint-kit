@@ -238,6 +238,33 @@ function OperatorFlow({ active, setActive }: { active: MainTab; setActive: (tab:
   );
 }
 
+function MobileBottomNav({ active, setActive }: { active: MainTab; setActive: (tab: MainTab) => void }) {
+  const items: Array<{ tab: MainTab; label: string }> = [
+    { tab: "Mints", label: "Drop" },
+    { tab: "Wallets", label: "Wallets" },
+    { tab: "Vault", label: "Vault" },
+    { tab: "Reports", label: "Review" },
+  ];
+
+  return (
+    <nav className="fixed inset-x-3 bottom-3 z-40 grid grid-cols-4 gap-1 rounded-[1.35rem] border border-slate-200/80 bg-white/92 p-1 shadow-[0_18px_60px_rgba(15,23,42,0.22)] backdrop-blur-xl lg:hidden" aria-label="Mobile operator flow">
+      {items.map((item) => (
+        <button
+          key={item.tab}
+          type="button"
+          onClick={() => setActive(item.tab)}
+          className={cx(
+            "min-h-11 rounded-2xl px-2 text-[11px] font-black transition",
+            active === item.tab ? "bg-violet-600 text-white" : "text-slate-600 hover:bg-violet-50 hover:text-violet-700",
+          )}
+        >
+          {item.label}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
 function MainPanel({ active }: { active: MainTab }) {
   if (active === "Mints") {
     return <MintConsole embedded />;
@@ -280,7 +307,7 @@ export default function MintConsoleShell({ initialTab = "Mints" }: { initialTab?
   return (
     <CompasGate>
     <main className="overflow-x-hidden">
-      <div className="min-h-dvh bg-[radial-gradient(circle_at_top_left,#ede9fe_0,#f8fafc_36%,#ffffff_72%)] px-3 py-3 text-slate-950 transition-colors duration-300 sm:px-6 sm:py-5 lg:px-8">
+      <div className="min-h-dvh bg-[radial-gradient(circle_at_top_left,#ede9fe_0,#f8fafc_36%,#ffffff_72%)] px-3 pb-24 pt-3 text-slate-950 transition-colors duration-300 sm:px-6 sm:py-5 lg:px-8">
         <div className="mx-auto grid max-w-[1480px] min-w-0 gap-5 lg:grid-cols-[300px_minmax(0,1fr)]">
           <Sidebar active={activeTab} setActive={setActiveTab} stagedWallets={wallets.length} />
           <div className="grid min-w-0 gap-5">
@@ -294,6 +321,7 @@ export default function MintConsoleShell({ initialTab = "Mints" }: { initialTab?
           </div>
         </div>
       </div>
+      <MobileBottomNav active={activeTab} setActive={setActiveTab} />
     </main>
     </CompasGate>
   );

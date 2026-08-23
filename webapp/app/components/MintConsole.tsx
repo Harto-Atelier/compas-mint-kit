@@ -421,6 +421,17 @@ function CollectionPanel({ discovery }: { discovery: MintDiscoveryResponse }) {
           </div>
         </div>
       </div>
+      {discovery.signals?.length ? (
+        <div className="grid gap-3 border-t border-violet-100 bg-violet-50/45 p-5 sm:grid-cols-2 lg:grid-cols-4">
+          {discovery.signals.map((signal) => (
+            <div key={signal.label} className="rounded-2xl border border-white/80 bg-white/85 p-3 shadow-sm">
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">{signal.label}</p>
+              <p className={`mt-1 text-sm font-black ${signal.state === "ready" ? "text-emerald-700" : signal.state === "blocked" ? "text-red-700" : "text-amber-700"}`}>{signal.value}</p>
+              <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">{signal.detail}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
       {discovery.warnings.length > 0 ? (
         <div className="border-t border-amber-200 bg-amber-50 px-5 py-3 text-sm font-semibold text-amber-800">
           <p className="font-black uppercase tracking-[0.16em] text-amber-700">Review warnings</p>

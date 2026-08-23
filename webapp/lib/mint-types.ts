@@ -58,12 +58,20 @@ export interface MintStage {
   warnings: string[];
 }
 
+export interface MintDiscoverySignal {
+  label: string;
+  value: string;
+  state: "ready" | "watch" | "blocked";
+  detail: string;
+}
+
 export interface MintDiscoveryResponse {
   ok: true;
   query: string;
   resolvedAt: string;
   collection: CollectionCard;
   stages: MintStage[];
+  signals: MintDiscoverySignal[];
   warnings: string[];
 }
 
