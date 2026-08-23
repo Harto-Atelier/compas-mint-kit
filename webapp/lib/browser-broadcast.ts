@@ -3,6 +3,7 @@ import { Interface, JsonRpcProvider, Wallet, parseEther } from "ethers";
 export type BrowserBroadcastChainKey = "ethereum" | "base" | "robinhood";
 export type BrowserMintStatus = "prepared" | "simulated" | "broadcast" | "failed";
 export type BrowserMintStageSource = "onchain-seadrop" | "opensea-signed-preview" | "mock-preview";
+export type BrowserMintRecipientMode = "payer" | "holder" | "custom";
 
 export interface UnlockedLaunchVaultWallet {
   alias: string;
@@ -34,6 +35,9 @@ export interface BrowserMintPlanInput {
   vault: UnlockedLaunchVault | null | undefined;
   rpcUrl?: string;
   seaDropAddress?: string;
+  recipientMode?: BrowserMintRecipientMode;
+  holderRecipientAddress?: string | null;
+  customRecipientAddress?: string | null;
 }
 
 export interface BrowserChainConfig {
@@ -60,6 +64,8 @@ export interface BrowserPreparedMint {
   rpcUrl: string;
   walletAlias: string;
   walletAddress: string;
+  recipientMode: BrowserMintRecipientMode;
+  recipientAddress: string;
   stageId: string;
   stageLabel: string;
   quantity: number;
@@ -82,6 +88,8 @@ export interface BrowserRunReportTransaction {
   id: string;
   walletAlias: string;
   walletAddress: string;
+  recipientMode: BrowserMintRecipientMode;
+  recipientAddress: string;
   stageId: string;
   stageLabel: string;
   quantity: number;
@@ -220,12 +228,14 @@ export function buildBrowserMintPlan(input: BrowserMintPlanInput): BrowserMintPl
 
   const wallets = input.vault.wallets.slice(0, Math.max(1, Math.floor(input.walletCount)));
   const transactions: BrowserPreparedMint[] = [];
+  const recipientPlan = resolveRecipientPlan(input);
 
   for (const [walletIndex, wallet] of wallets.entries()) {
     for (const stage of executableStages) {
+      const recipientAddress = recipientPlan.mode === "payer" ? ZERO_ADDRESS : recipientPlan.address;
       const request: BrowserPreparedMintRequest = {
         to: chain.seaDropAddress,
-        data: IFACE.encodeFunctionData("mintPublic", [input.collectionAddress, stage.feeRecipient, ZERO_ADDRESS, BigInt(stage.quantity)]),
+        data: IFACE.encodeFunctionData("mintPublic", [input.collectionAddress, stage.feeRecipient, recipientAddress, BigInt(stage.quantity)]),
         value: parseEther(stage.priceEth || "0") * BigInt(stage.quantity),
       };
       const prepared: BrowserPreparedMint = makeSerializablePreparedMint({
@@ -234,6 +244,8 @@ export function buildBrowserMintPlan(input: BrowserMintPlanInput): BrowserMintPl
         rpcUrl: chain.rpcUrl,
         walletAlias: wallet.alias || `wallet-${walletIndex + 1}`,
         walletAddress: wallet.address,
+        recipientMode: recipientPlan.mode,
+        recipientAddress: recipientPlan.mode === "payer" ? wallet.address : recipientPlan.address,
         stageId: stage.id,
         stageLabel: stage.label,
         quantity: stage.quantity,
@@ -251,6 +263,16 @@ export function buildBrowserMintPlan(input: BrowserMintPlanInput): BrowserMintPl
     transactions,
     warnings: chain.warnings,
   };
+}
+
+function resolveRecipientPlan(input: BrowserMintPlanInput): { mode: BrowserMintRecipientMode; address: string } {
+  const mode = input.recipientMode ?? "payer";
+  if (mode === "payer") return { mode, address: ZERO_ADDRESS };
+  const address = mode === "holder" ? clean(input.holderRecipientAddress) : clean(input.customRecipientAddress);
+  if (!address || !/^0x[a-fA-F0-9]{40}$/.test(address)) {
+    throw new Error(mode === "holder" ? "Connect and verify a Compas holder wallet before routing mints to the holder recipient." : "Enter a valid custom recipient address before preparing recipient-routed mints.");
+  }
+  return { mode, address };
 }
 
 export async function simulatePreparedBrowserMint(tx: BrowserPreparedMint, provider?: BrowserRpcProviderLike): Promise<BrowserPreparedMint> {
@@ -307,6 +329,8 @@ export function buildBrowserRunReport(input: {
       id: tx.id,
       walletAlias: tx.walletAlias,
       walletAddress: tx.walletAddress,
+      recipientMode: tx.recipientMode,
+      recipientAddress: tx.recipientAddress,
       stageId: tx.stageId,
       stageLabel: tx.stageLabel,
       quantity: tx.quantity,

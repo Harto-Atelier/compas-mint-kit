@@ -1,3 +1,4 @@
+import { Interface } from "ethers";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -183,4 +184,45 @@ test("browser gas strategy clamps attempts and warns on risky nonce/retry settin
   assert.equal(plan.attempts[4].maxFeeGwei, "0.128");
   assert.match(plan.warnings.join(" "), /Parallel nonce mode/i);
   assert.match(plan.warnings.join(" "), /More than 3 retries/i);
+});
+
+const seaDropIface = new Interface(["function mintPublic(address nftContract, address feeRecipient, address minterIfNotPayer, uint256 quantity) payable"]);
+
+test("recipient routing can mint directly to verified Compas holder while payer remains burner", () => {
+  const holderRecipient = "0x3333333333333333333333333333333333333333";
+  const plan = buildBrowserMintPlan({
+    chainKey: "base",
+    collectionAddress: COLLECTION,
+    stages: [publicStage],
+    walletCount: 1,
+    vault: unlockedVault,
+    recipientMode: "holder",
+    holderRecipientAddress: holderRecipient,
+  });
+  const tx = plan.transactions[0];
+  const decoded = seaDropIface.decodeFunctionData("mintPublic", tx.request.data);
+
+  assert.equal(tx.walletAddress, unlockedVault.wallets[0].address);
+  assert.equal(tx.recipientMode, "holder");
+  assert.equal(tx.recipientAddress, holderRecipient);
+  assert.equal(decoded[2], holderRecipient);
+  assert.notEqual(tx.walletAddress.toLowerCase(), holderRecipient.toLowerCase());
+
+  const report = buildBrowserRunReport({ collection: { address: COLLECTION, name: "Holder Routed" }, chain: plan.chain, transactions: [tx] });
+  assert.equal(report.transactions[0].recipientMode, "holder");
+  assert.equal(report.transactions[0].recipientAddress, holderRecipient);
+});
+
+test("holder recipient routing fails closed without a verified holder address", () => {
+  assert.throws(
+    () => buildBrowserMintPlan({
+      chainKey: "base",
+      collectionAddress: COLLECTION,
+      stages: [publicStage],
+      walletCount: 1,
+      vault: unlockedVault,
+      recipientMode: "holder",
+    }),
+    /verify a Compas holder wallet/i,
+  );
 });

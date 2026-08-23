@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { formatEther } from "ethers";
 import {
   LAUNCH_VAULT_STORAGE_KEY,
@@ -18,11 +18,13 @@ import {
   buildBrowserMintPlan,
   simulatePreparedBrowserMint,
   type BrowserBroadcastChainKey,
+  type BrowserMintRecipientMode,
   type BrowserMintStageInput,
   type BrowserPreparedMint,
   type UnlockedLaunchVault,
 } from "@/lib/browser-broadcast";
 import type { CollectionCard, MintStage, StageKind } from "@/lib/mint-types";
+import { fetchSignedGateSession, type CompasGateSession } from "@/lib/compas-gate";
 
 const FIELD = "h-11 rounded-2xl border border-violet-100 bg-white px-3 text-sm font-bold text-slate-950 outline-none shadow-sm placeholder:text-slate-400 focus:border-violet-300 focus:ring-4 focus:ring-violet-100";
 const CHAINS: BrowserBroadcastChainKey[] = ["ethereum", "base", "robinhood"];
@@ -52,6 +54,13 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages, 
   const [retryLimit, setRetryLimit] = useState(2);
   const [escalationPercent, setEscalationPercent] = useState(15);
   const [nonceMode, setNonceMode] = useState<"sequential" | "parallel">("sequential");
+  const [recipientMode, setRecipientMode] = useState<BrowserMintRecipientMode>("payer");
+  const [customRecipientAddress, setCustomRecipientAddress] = useState("");
+  const [holderSession, setHolderSession] = useState<CompasGateSession | null>(null);
+
+  useEffect(() => {
+    fetchSignedGateSession().then(setHolderSession).catch(() => setHolderSession(null));
+  }, []);
 
   const selectedStages = useMemo<BrowserMintStageInput[]>(
     () =>
@@ -118,6 +127,9 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages, 
         vault: unlockedVault,
         rpcUrl,
         seaDropAddress,
+        recipientMode,
+        holderRecipientAddress: holderSession?.address,
+        customRecipientAddress,
       });
       setTransactions(plan.transactions);
       setNotice(`Prepared ${plan.transactions.length} transaction(s). Dry-run simulation is required before broadcast.`);
@@ -140,6 +152,9 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages, 
           vault: unlockedVault,
           rpcUrl,
           seaDropAddress,
+          recipientMode,
+          holderRecipientAddress: holderSession?.address,
+          customRecipientAddress,
         });
         current = plan.transactions;
         setTransactions(current);
@@ -267,6 +282,27 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages, 
 
           {chain.warnings.length > 0 ? <ul className="mt-3 space-y-1 text-xs font-bold text-amber-800">{chain.warnings.map((warning) => <li key={warning}>⚠ {warning}</li>)}</ul> : null}
 
+          <div className="mt-4 rounded-2xl border border-violet-200 bg-violet-50/70 p-3">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-violet-700">Mint destination</p>
+            <p className="mt-1 text-xs font-bold text-slate-600">SeaDrop public mints can route the NFT recipient separately from the burner payer. Signed/mock stages stay disabled.</p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+              <label className="rounded-2xl border border-white bg-white px-3 py-2 text-xs font-black text-slate-700">
+                <input type="radio" checked={recipientMode === "payer"} onChange={() => setRecipientMode("payer")} className="mr-2" />Payer wallet
+              </label>
+              <label className="rounded-2xl border border-white bg-white px-3 py-2 text-xs font-black text-slate-700">
+                <input type="radio" checked={recipientMode === "holder"} onChange={() => setRecipientMode("holder")} className="mr-2" />Compas holder
+              </label>
+              <label className="rounded-2xl border border-white bg-white px-3 py-2 text-xs font-black text-slate-700">
+                <input type="radio" checked={recipientMode === "custom"} onChange={() => setRecipientMode("custom")} className="mr-2" />Custom
+              </label>
+            </div>
+            <div className="mt-3 grid gap-2 text-xs font-bold text-slate-600">
+              {recipientMode === "holder" ? <p className="rounded-2xl bg-white px-3 py-2">Recipient: {holderSession ? maskVaultAddress(holderSession.address) : "verified holder session required"}</p> : null}
+              {recipientMode === "custom" ? <input value={customRecipientAddress} onChange={(event) => setCustomRecipientAddress(event.target.value)} placeholder="0x recipient address" className={`${FIELD} font-mono normal-case tracking-normal`} /> : null}
+              <p className="rounded-2xl bg-white px-3 py-2">Payer remains the unlocked burner wallet; report records payer + recipient separately.</p>
+            </div>
+          </div>
+
           <div className="mt-4 grid gap-2 text-sm font-semibold sm:grid-cols-3">
             <Metric label="Executable stages" value={executableStageCount} />
             <Metric label="Wallets requested" value={Math.min(walletCount, vault?.wallets.length ?? 0)} />
@@ -338,18 +374,23 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages, 
 function TransactionTable({ transactions }: { transactions: BrowserPreparedMint[] }) {
   return (
     <div className="mt-5 overflow-hidden rounded-3xl border border-amber-200 bg-white/85">
-      <div className="grid gap-3 border-b border-amber-100 bg-amber-50 px-4 py-3 text-xs font-black uppercase tracking-[0.16em] text-amber-700 md:grid-cols-[1fr_0.7fr_0.7fr_0.9fr]">
-        <span>Wallet</span>
+      <div className="grid gap-3 border-b border-amber-100 bg-amber-50 px-4 py-3 text-xs font-black uppercase tracking-[0.16em] text-amber-700 md:grid-cols-[1fr_0.8fr_0.7fr_0.7fr_0.9fr]">
+        <span>Payer</span>
+        <span>Recipient</span>
         <span>Status</span>
         <span>Value</span>
         <span>Explorer</span>
       </div>
       <div className="divide-y divide-amber-100">
         {transactions.map((tx) => (
-          <article key={tx.id} className="grid gap-2 px-4 py-3 text-sm font-semibold text-slate-600 md:grid-cols-[1fr_0.7fr_0.7fr_0.9fr] md:items-center">
+          <article key={tx.id} className="grid gap-2 px-4 py-3 text-sm font-semibold text-slate-600 md:grid-cols-[1fr_0.8fr_0.7fr_0.7fr_0.9fr] md:items-center">
             <div>
               <p className="font-black text-slate-950">{tx.walletAlias}</p>
               <p className="font-mono text-xs text-slate-500">{maskVaultAddress(tx.walletAddress)}</p>
+            </div>
+            <div>
+              <p className="font-black text-slate-950">{tx.recipientMode}</p>
+              <p className="font-mono text-xs text-slate-500">{maskVaultAddress(tx.recipientAddress)}</p>
             </div>
             <div><StatusPill status={tx.status} gas={tx.simulationGas} /></div>
             <div className="font-mono text-xs">{formatEther(tx.request.value)} ETH</div>
