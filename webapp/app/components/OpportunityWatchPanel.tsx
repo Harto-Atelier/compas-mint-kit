@@ -2,6 +2,8 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { OpportunityScanResult } from "@/lib/opportunity-scan";
+import { fetchSignedGateSession, type CompasGateSession } from "@/lib/compas-gate";
+import { buildCompasAutopilotProposal, defaultCompasAutopilotPolicy, type CompasAutopilotPolicy } from "@/lib/compas-autopilot";
 
 const WATCHLIST_KEY = "compas.opportunityWatchlist.v1";
 const WATCHLIST_META_KEY = "compas.opportunityWatchlistMeta.v1";
@@ -22,10 +24,17 @@ export default function OpportunityWatchPanel({ embedded = false }: { embedded?:
   const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(0);
   const [selectedQuery, setSelectedQuery] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [holderSession, setHolderSession] = useState<CompasGateSession | null>(null);
+  const [autopilotPolicy, setAutopilotPolicy] = useState<CompasAutopilotPolicy>(() => defaultCompasAutopilotPolicy());
 
   const canScan = watchlist.length > 0 && !busy;
   const topCandidate = useMemo(() => scan?.candidates[0], [scan]);
   const selectedCandidate = scan?.candidates.find((candidate) => candidate.query === selectedQuery) ?? topCandidate;
+  const autopilotProposal = useMemo(() => buildCompasAutopilotProposal({ scan, policy: autopilotPolicy, holderAddress: holderSession?.address }), [scan, autopilotPolicy, holderSession]);
+
+  useEffect(() => {
+    fetchSignedGateSession().then(setHolderSession).catch(() => setHolderSession(null));
+  }, []);
 
   useEffect(() => {
     if (!autoRefreshSeconds || watchlist.length === 0) return;
@@ -210,6 +219,8 @@ export default function OpportunityWatchPanel({ embedded = false }: { embedded?:
             </div>
           ) : <p className="mt-4 rounded-3xl border border-dashed border-violet-200 bg-violet-50/60 p-6 text-center text-sm font-semibold text-slate-500">Run a scan to see ranked opportunities.</p>}
 
+          <AutopilotPanel policy={autopilotPolicy} setPolicy={setAutopilotPolicy} proposal={autopilotProposal} holderAddress={holderSession?.address} />
+
           {selectedCandidate ? <CandidateDetail candidate={selectedCandidate} meta={meta[selectedCandidate.query]} /> : null}
 
           {scan?.candidates.length ? <div className="mt-4 space-y-2">{scan.candidates.map((candidate) => <CandidateRow key={`${candidate.query}-${candidate.address}`} candidate={candidate} />)}</div> : null}
@@ -229,6 +240,45 @@ export default function OpportunityWatchPanel({ embedded = false }: { embedded?:
           ) : null}
         </div>
       </div>
+    </section>
+  );
+}
+
+function AutopilotPanel({ holderAddress, policy, proposal, setPolicy }: { holderAddress?: string; policy: CompasAutopilotPolicy; proposal: ReturnType<typeof buildCompasAutopilotProposal>; setPolicy: (policy: CompasAutopilotPolicy) => void }) {
+  return (
+    <section className="mt-4 rounded-3xl border border-fuchsia-200 bg-fuchsia-50/70 p-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-fuchsia-700">Compas autopilot</p>
+          <h3 className="mt-1 text-lg font-black text-slate-950">Auto-scan → auto-propose → manual broadcast</h3>
+          <p className="mt-1 text-xs font-bold text-slate-600">Fully automated discovery/proposal for Compas holder recipient. Real ETH broadcast remains explicit/manual.</p>
+        </div>
+        <label className="flex items-center gap-2 rounded-full bg-white px-3 py-2 text-xs font-black text-fuchsia-700">
+          <input type="checkbox" checked={policy.enabled} onChange={(event) => setPolicy({ ...policy, enabled: event.target.checked })} /> Enabled
+        </label>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-4">
+        <input aria-label="Max total ETH" type="number" step="0.001" value={policy.maxTotalEth} onChange={(event) => setPolicy({ ...policy, maxTotalEth: Number(event.target.value) })} className={FIELD} />
+        <input aria-label="Max quantity" type="number" value={policy.maxQuantity} onChange={(event) => setPolicy({ ...policy, maxQuantity: Number(event.target.value) })} className={FIELD} />
+        <input aria-label="Max gas gwei" type="number" step="0.001" value={policy.maxGasGwei} onChange={(event) => setPolicy({ ...policy, maxGasGwei: Number(event.target.value) })} className={FIELD} />
+        <select value={policy.mode} onChange={(event) => setPolicy({ ...policy, mode: event.target.value as CompasAutopilotPolicy["mode"] })} className={FIELD}>
+          <option value="auto-propose">auto-propose</option>
+          <option value="auto-simulate">auto-simulate draft</option>
+        </select>
+      </div>
+      <div className="mt-3 rounded-2xl bg-white p-3 text-xs font-bold text-slate-600">
+        Holder recipient: {holderAddress ? holderAddress : "connect/sign as Compas holder to resolve"}
+      </div>
+      {proposal ? (
+        <div className="mt-3 rounded-2xl border border-fuchsia-200 bg-white p-3">
+          <p className="text-xs font-black uppercase tracking-[0.16em] text-fuchsia-700">Proposed plan</p>
+          <p className="mt-2 text-sm font-black text-slate-950">{proposal.candidate.name} · {proposal.candidate.chain} · score {proposal.candidate.score}</p>
+          <p className="mt-1 text-xs font-bold text-slate-600">Qty {proposal.proposedPlan.quantity} · max {proposal.proposedPlan.maxTotalEth} ETH · recipient {proposal.recipient.status}</p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {proposal.checklist.map((item) => <span key={item.label} className={`rounded-2xl border px-3 py-2 text-xs font-black ${item.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>{item.ok ? "✓" : "○"} {item.label}</span>)}
+          </div>
+        </div>
+      ) : <p className="mt-3 rounded-2xl border border-dashed border-fuchsia-200 bg-white/70 p-3 text-xs font-bold text-slate-500">Run a scan to generate an autopilot proposal.</p>}
     </section>
   );
 }
