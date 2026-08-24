@@ -1,4 +1,4 @@
-import type { CompasAutopilotProposal } from "./compas-autopilot";
+import type { CompasAutopilotHandoff, CompasAutopilotProposal } from "./compas-autopilot";
 
 export const COMPAS_MADNESS_PLAN_KEY = "compas.madnessPlan.v1";
 
@@ -115,6 +115,51 @@ export function buildCompasMadnessPlan(input: { proposal: CompasAutopilotProposa
     },
     checklist,
     blockedReasons,
+  };
+}
+
+export function buildCompasMadnessSignerHandoff(plan: CompasMadnessPlan, now = new Date()): CompasAutopilotHandoff {
+  return {
+    schemaVersion: "compas-autopilot-handoff.v1",
+    createdAt: now.toISOString(),
+    proposal: {
+      ...plan.sourceProposal,
+      generatedAt: plan.generatedAt,
+      mode: "preview-only",
+      automation: "auto-simulate",
+      safety: { previewOnly: true, execution: "none", broadcast: false, custody: false, requiresManualBroadcast: true },
+      policy: {
+        enabled: true,
+        mode: "auto-simulate",
+        maxTotalEth: plan.mintPlan.maxTotalEth,
+        maxQuantity: plan.mintPlan.executableQuantity,
+        maxGasGwei: 0,
+        allowedChains: [plan.sourceProposal.candidate.chain],
+        recipientMode: "verified-compas-holder",
+        requireExecutableSeaDrop: true,
+        canaryMode: true,
+        allowedContracts: [plan.sourceProposal.candidate.address],
+      },
+      proposedPlan: {
+        quantity: plan.mintPlan.executableQuantity,
+        maxTotalEth: plan.mintPlan.maxTotalEth,
+        maxGasGwei: 0,
+        route: "watch-scan-to-browser-signer",
+        nextStep: plan.blockedReasons.length ? "manual-review" : "simulate-in-browser",
+      },
+      checklist: plan.checklist,
+      blockedReasons: plan.blockedReasons,
+    },
+    signerDefaults: {
+      chain: plan.sourceProposal.candidate.chain,
+      collectionAddress: plan.sourceProposal.candidate.address,
+      quantity: plan.mintPlan.executableQuantity,
+      recipientMode: "holder",
+      holderRecipientAddress: plan.mintPlan.recipientAddress,
+      maxTotalEth: plan.mintPlan.maxTotalEth,
+      maxGasGwei: 0,
+    },
+    safety: { previewOnly: true, execution: "none", broadcast: false, custody: false, requiresManualBroadcast: true },
   };
 }
 

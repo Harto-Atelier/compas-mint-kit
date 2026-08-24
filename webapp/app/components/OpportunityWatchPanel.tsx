@@ -5,7 +5,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { OpportunityScanResult } from "@/lib/opportunity-scan";
 import { fetchSignedGateSession, type CompasGateSession } from "@/lib/compas-gate";
 import { buildCompasAutopilotHandoff, buildCompasAutopilotProposal, COMPAS_AUTOPILOT_HANDOFF_KEY, defaultCompasAutopilotPolicy, type CompasAutopilotPolicy } from "@/lib/compas-autopilot";
-import { buildCompasMadnessPlan, COMPAS_MADNESS_PLAN_KEY, defaultCompasMadnessPolicy, type CompasMadnessPolicy } from "@/lib/compas-madness";
+import { buildCompasMadnessPlan, buildCompasMadnessSignerHandoff, COMPAS_MADNESS_PLAN_KEY, defaultCompasMadnessPolicy, type CompasMadnessPolicy } from "@/lib/compas-madness";
 
 const WATCHLIST_KEY = "compas.opportunityWatchlist.v1";
 const WATCHLIST_META_KEY = "compas.opportunityWatchlistMeta.v1";
@@ -310,6 +310,8 @@ function AutopilotPanel({ holderAddress, policy, proposal, setPolicy }: { holder
 }
 
 function MadnessPanel({ policy, plan, setPolicy }: { policy: CompasMadnessPolicy; plan: ReturnType<typeof buildCompasMadnessPlan>; setPolicy: (policy: CompasMadnessPolicy) => void }) {
+  const router = useRouter();
+
   function exportMadness() {
     if (!plan) return;
     downloadText(`compas-madness-plan-${Date.now()}.json`, `${JSON.stringify(plan, null, 2)}\n`, "application/json");
@@ -318,6 +320,13 @@ function MadnessPanel({ policy, plan, setPolicy }: { policy: CompasMadnessPolicy
   function saveMadness() {
     if (!plan) return;
     window.localStorage.setItem(COMPAS_MADNESS_PLAN_KEY, JSON.stringify(plan));
+  }
+
+  function sendMadnessToSigner() {
+    if (!plan || plan.blockedReasons.length) return;
+    window.localStorage.setItem(COMPAS_MADNESS_PLAN_KEY, JSON.stringify(plan));
+    window.localStorage.setItem(COMPAS_AUTOPILOT_HANDOFF_KEY, JSON.stringify(buildCompasMadnessSignerHandoff(plan)));
+    router.push("/app?tab=Mints#browser-signer");
   }
 
   return (
@@ -357,9 +366,10 @@ function MadnessPanel({ policy, plan, setPolicy }: { policy: CompasMadnessPolicy
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {plan.checklist.map((item) => <span key={item.label} className={`rounded-2xl border px-3 py-2 text-xs font-black ${item.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>{item.ok ? "✓" : "○"} {item.label}</span>)}
           </div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
             <button type="button" onClick={exportMadness} className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-black uppercase tracking-[0.14em] text-red-700">Export madness</button>
             <button type="button" onClick={saveMadness} className="rounded-2xl bg-slate-950 px-4 py-3 text-xs font-black uppercase tracking-[0.14em] text-white">Save madness plan</button>
+            <button type="button" onClick={sendMadnessToSigner} disabled={plan.blockedReasons.length > 0} className="rounded-2xl bg-red-600 px-4 py-3 text-xs font-black uppercase tracking-[0.14em] text-white disabled:cursor-not-allowed disabled:opacity-50">Prefill signer</button>
           </div>
           <p className="mt-3 rounded-2xl bg-slate-50 p-3 text-xs font-bold text-slate-600">OpenSea listing is suggest/manual-review only: no Seaport order is signed, posted, or auto-listed from this preview.</p>
         </div>

@@ -66,16 +66,18 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages, 
   }, []);
 
   const selectedStages = useMemo<BrowserMintStageInput[]>(
-    () =>
-      stages.map((stage) => ({
+    () => {
+      const handoffMatchesCollection = autopilotHandoff?.signerDefaults.collectionAddress.toLowerCase() === collection.address.toLowerCase();
+      return stages.map((stage) => ({
         id: stage.id,
         label: stage.label,
         source: stage.source,
-        quantity: quantities[stage.id] ?? 0,
+        quantity: handoffMatchesCollection && stage.id === "public" ? autopilotHandoff.signerDefaults.quantity : (quantities[stage.id] ?? 0),
         priceEth: stage.priceEth,
         feeRecipient: stage.feeRecipient ?? null,
-      })),
-    [quantities, stages],
+      }));
+    },
+    [autopilotHandoff, collection.address, quantities, stages],
   );
   const executableStageCount = selectedStages.filter((stage) => stage.source === "onchain-seadrop" && stage.quantity > 0 && stage.feeRecipient).length;
   const unlockedVault = useMemo<UnlockedLaunchVault | null>(() => {
