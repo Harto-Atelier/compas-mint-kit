@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { type ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import {
   buildMarketFighterPlan,
   defaultMarketFighterPolicy,
@@ -12,6 +12,9 @@ import {
   type MarketFighterSellMode,
 } from "@/lib/market-fighter";
 import type { LivePressureMetrics } from "@/lib/bot-pressure-live";
+import { fetchSignedGateSession, type CompasGateSession } from "@/lib/compas-gate";
+import { extractCostBasisFromBrowserReport, rejectSecretShapedReport, summarizeCostBasis, type CostBasisSummary } from "@/lib/cost-basis";
+import { buildSeaportListingDraft } from "@/lib/seaport-listing-draft";
 
 const FIELD = "rounded-2xl border border-violet-100 bg-white px-3 py-2 text-sm font-bold text-slate-950 outline-none shadow-sm placeholder:text-slate-400 focus:border-violet-300 focus:ring-4 focus:ring-violet-100";
 const POSITIONS_KEY = "compas.marketFighterPositions.v1";
@@ -25,8 +28,16 @@ export default function MarketFighterPanel({ embedded = false }: { embedded?: bo
   const [liveMetrics, setLiveMetrics] = useState<LivePressureMetrics | null>(null);
   const [liveBusy, setLiveBusy] = useState(false);
   const [liveError, setLiveError] = useState<string | null>(null);
+  const [holderSession, setHolderSession] = useState<CompasGateSession | null>(null);
+  const [holdingsBusy, setHoldingsBusy] = useState(false);
+  const [holdingsError, setHoldingsError] = useState<string | null>(null);
+  const [costSummary, setCostSummary] = useState<CostBasisSummary | null>(null);
 
   const plan = useMemo(() => buildMarketFighterPlan({ positions, policy, pressureInput }), [positions, policy, pressureInput]);
+
+  useEffect(() => {
+    fetchSignedGateSession().then(setHolderSession).catch(() => setHolderSession(null));
+  }, []);
 
   async function fetchLive() {
     const target = positions[0] ?? (/^0x[a-fA-F0-9]{40}$/.test(draft.collectionAddress.trim()) ? draft : null);
@@ -93,6 +104,67 @@ export default function MarketFighterPanel({ embedded = false }: { embedded?: bo
     window.localStorage.setItem(MARKET_FIGHTER_PLAN_KEY, JSON.stringify(plan));
   }
 
+  async function importCostBasis(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      rejectSecretShapedReport(text);
+      const entries = extractCostBasisFromBrowserReport(JSON.parse(text));
+      setCostSummary(summarizeCostBasis(entries));
+    } catch (err) {
+      setHoldingsError(err instanceof Error ? err.message : String(err));
+    } finally {
+      event.target.value = "";
+    }
+  }
+
+  async function detectHolderPositions() {
+    const wallet = holderSession?.address;
+    const target = positions[0] ?? (/^0x[a-fA-F0-9]{40}$/.test(draft.collectionAddress.trim()) ? draft : null);
+    if (!wallet) {
+      setHoldingsError("Connect/sign as a Compas holder first.");
+      return;
+    }
+    if (!target) {
+      setHoldingsError("Add or paste a collection address first.");
+      return;
+    }
+    setHoldingsBusy(true);
+    setHoldingsError(null);
+    try {
+      const params = new URLSearchParams({ wallet, contract: target.collectionAddress, chain: target.chain.toLowerCase() });
+      const response = await fetch(`/api/market/holdings?${params.toString()}`, { cache: "no-store" });
+      const body = (await response.json()) as { ok: boolean; result: { tokenIds: string[]; error?: string; sampleTruncated: boolean } };
+      if (body.result.error) throw new Error(body.result.error);
+      const cost = costSummary?.perRecipient[wallet] ?? draft.costBasisEth;
+      const perTokenCost = body.result.tokenIds.length > 0 ? Number((cost / body.result.tokenIds.length).toFixed(6)) : draft.costBasisEth;
+      const next = body.result.tokenIds.map((tokenId) => ({ tokenId, collectionAddress: target.collectionAddress, chain: target.chain, costBasisEth: perTokenCost, acquiredAt: new Date().toISOString(), status: "held" as const }));
+      persistPositions(next);
+      if (body.result.sampleTruncated) setHoldingsError("Holdings sample truncated by Blockscout page cap; export/review before listing.");
+    } catch (err) {
+      setHoldingsError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setHoldingsBusy(false);
+    }
+  }
+
+  function exportListingDraft(index: number) {
+    const proposal = plan.proposals[index];
+    if (!proposal || !holderSession) return;
+    const draft = buildSeaportListingDraft({ proposal, offererAddress: holderSession.address, durationHours: 24 });
+    const json = `${JSON.stringify(draft, null, 2)}\n`;
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `seaport-listing-draft-${proposal.tokenId}-${Date.now()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
   const pressureBand = plan.botPressure.band;
   const bandTone = pressureBand === "high" ? "bg-red-50 text-red-700 border-red-200" : pressureBand === "medium" ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-emerald-50 text-emerald-700 border-emerald-200";
 
@@ -117,6 +189,7 @@ export default function MarketFighterPanel({ embedded = false }: { embedded?: bo
         <div className="grid gap-4">
           <PolicyCard policy={policy} setPolicy={persistPolicy} />
           <PressureCard pressureInput={pressureInput} setPressureInput={persistPressure} reasons={plan.botPressure.reasons} fetchLive={fetchLive} liveBusy={liveBusy} liveError={liveError} liveMetrics={liveMetrics} />
+          <HoldingsCard costSummary={costSummary} detectHolderPositions={detectHolderPositions} holdingsBusy={holdingsBusy} holdingsError={holdingsError} holderAddress={holderSession?.address} importCostBasis={importCostBasis} />
           <PositionForm draft={draft} setDraft={setDraft} addPosition={addPosition} />
         </div>
 
@@ -151,7 +224,7 @@ export default function MarketFighterPanel({ embedded = false }: { embedded?: bo
                   <span>Net after fees: {proposal.netAfterFeesEth} ETH</span>
                   <span>Est. profit: {proposal.estimatedProfitEth} ETH</span>
                 </div>
-                {proposal.blockedReasons.length ? <p className="mt-2 text-xs font-bold text-amber-800">{proposal.blockedReasons.join(" · ")}</p> : <p className="mt-2 text-xs font-bold text-emerald-700">Next: manual listing review (Seaport signature required).</p>}
+                {proposal.blockedReasons.length ? <p className="mt-2 text-xs font-bold text-amber-800">{proposal.blockedReasons.join(" · ")}</p> : <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><p className="text-xs font-bold text-emerald-700">Next: manual listing review (Seaport signature required).</p><button type="button" onClick={() => exportListingDraft(index)} disabled={!holderSession} className="rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-50">Export Seaport draft</button></div>}
               </article>
             ))}
           </div>
@@ -195,6 +268,30 @@ function PolicyCard({ policy, setPolicy }: { policy: MarketFighterPolicy; setPol
         <input aria-label="Min hold minutes" type="number" value={policy.minHoldMinutes} onChange={(event) => setPolicy({ ...policy, minHoldMinutes: Number(event.target.value) })} className={FIELD} />
         <input aria-label="Bot pressure ceiling" type="number" value={policy.botPressureCeiling} onChange={(event) => setPolicy({ ...policy, botPressureCeiling: Number(event.target.value) })} className={FIELD} />
       </div>
+    </section>
+  );
+}
+
+function HoldingsCard({ costSummary, detectHolderPositions, holdingsBusy, holdingsError, holderAddress, importCostBasis }: { costSummary: CostBasisSummary | null; detectHolderPositions: () => Promise<void>; holdingsBusy: boolean; holdingsError: string | null; holderAddress?: string; importCostBasis: (event: ChangeEvent<HTMLInputElement>) => Promise<void> }) {
+  return (
+    <section className="rounded-3xl border border-indigo-200 bg-white p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-indigo-700">Holder positions + cost basis</p>
+          <p className="mt-1 text-xs font-bold text-slate-600">Detect tokenIds for the connected holder via keyless Blockscout. Import a signer report to allocate mint cost basis.</p>
+        </div>
+        <button type="button" onClick={detectHolderPositions} disabled={holdingsBusy} className="rounded-full bg-indigo-600 px-4 py-2 text-xs font-black uppercase tracking-[0.12em] text-white disabled:cursor-not-allowed disabled:opacity-50">{holdingsBusy ? "Detecting…" : "Auto-detect"}</button>
+      </div>
+      <div className="mt-3 grid gap-2 text-xs font-bold text-slate-700 sm:grid-cols-2">
+        <span className="rounded-2xl bg-indigo-50 px-3 py-2 text-indigo-700">Holder: {holderAddress ? `${holderAddress.slice(0, 6)}…${holderAddress.slice(-4)}` : "connect first"}</span>
+        <label className="rounded-2xl border border-dashed border-indigo-200 px-3 py-2 text-indigo-700">
+          Import run report JSON
+          <input type="file" accept="application/json,.json" onChange={importCostBasis} className="sr-only" />
+        </label>
+      </div>
+      {costSummary ? <p className="mt-2 rounded-2xl bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800">Cost basis loaded: {costSummary.count} tx · {costSummary.totalSpentEth} ETH total.</p> : null}
+      {holdingsError ? <p className="mt-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">{holdingsError}</p> : null}
+      <p className="mt-2 text-[11px] font-bold text-slate-500">Preview-only: this reads public NFT instances, never signs, never lists, never custodies.</p>
     </section>
   );
 }
