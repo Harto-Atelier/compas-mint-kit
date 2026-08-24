@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { DispersePanel } from "@/app/components/DisperseAcoPanels";
 import MintConsole from "@/app/components/MintConsole";
 import OpportunityWatchPanel from "@/app/components/OpportunityWatchPanel";
+import MarketFighterPanel from "@/app/components/MarketFighterPanel";
 import RunReportViewer from "@/app/components/RunReportViewer";
 import LaunchVaultConsole from "@/app/LaunchVaultConsole";
 import WalletConsole from "@/app/WalletConsole";
@@ -11,9 +12,9 @@ import { usePlannerStore } from "@/app/components/PlannerStoreProvider";
 import { countUnlockedVaultWallets } from "@/lib/planner-store";
 import CompasGate from "@/components/CompasGate";
 
-export type MainTab = "Mints" | "Watch" | "Wallets" | "Vault" | "Disperse" | "Reports";
+export type MainTab = "Mints" | "Watch" | "Market" | "Wallets" | "Vault" | "Disperse" | "Reports";
 
-const mainTabs: MainTab[] = ["Mints", "Watch", "Wallets", "Vault", "Disperse", "Reports"];
+const mainTabs: MainTab[] = ["Mints", "Watch", "Market", "Wallets", "Vault", "Disperse", "Reports"];
 
 const DOCS_URL = "https://github.com/Harto-Atelier/compas-mint-kit#readme";
 
@@ -27,6 +28,11 @@ const tabCopy: Record<MainTab, { eyebrow: string; title: string; body: string }>
     eyebrow: "Opportunity scan",
     title: "Rank drops before you spend attention.",
     body: "Maintain a local watchlist and run preview-only scans that never sign, custody, or broadcast.",
+  },
+  Market: {
+    eyebrow: "Market fighter",
+    title: "Defend holder positions on secondary.",
+    body: "Score bot pressure and propose OpenSea listing prices that clear target profit. Listings must be signed manually.",
   },
   Wallets: {
     eyebrow: "Wallet desk",
@@ -280,6 +286,10 @@ function MainPanel({ active }: { active: MainTab }) {
 
   if (active === "Watch") {
     return <OpportunityWatchPanel embedded />;
+  }
+
+  if (active === "Market") {
+    return <MarketFighterPanel embedded />;
   }
 
   if (active === "Wallets") {
