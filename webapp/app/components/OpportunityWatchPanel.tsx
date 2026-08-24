@@ -6,6 +6,7 @@ import type { OpportunityScanResult } from "@/lib/opportunity-scan";
 import { fetchSignedGateSession, type CompasGateSession } from "@/lib/compas-gate";
 import { buildCompasAutopilotHandoff, buildCompasAutopilotProposal, COMPAS_AUTOPILOT_HANDOFF_KEY, defaultCompasAutopilotPolicy, type CompasAutopilotPolicy } from "@/lib/compas-autopilot";
 import { buildCompasMadnessPlan, buildCompasMadnessSignerHandoff, COMPAS_MADNESS_PLAN_KEY, defaultCompasMadnessPolicy, type CompasMadnessPolicy } from "@/lib/compas-madness";
+import type { OpenSeaDropCard, OpenSeaDropsFeedResult } from "@/lib/opensea-drops-feed";
 
 const WATCHLIST_KEY = "compas.opportunityWatchlist.v1";
 const WATCHLIST_META_KEY = "compas.opportunityWatchlistMeta.v1";
@@ -29,6 +30,8 @@ export default function OpportunityWatchPanel({ embedded = false }: { embedded?:
   const [holderSession, setHolderSession] = useState<CompasGateSession | null>(null);
   const [autopilotPolicy, setAutopilotPolicy] = useState<CompasAutopilotPolicy>(() => defaultCompasAutopilotPolicy());
   const [madnessPolicy, setMadnessPolicy] = useState<CompasMadnessPolicy>(() => defaultCompasMadnessPolicy());
+  const [liveDrops, setLiveDrops] = useState<OpenSeaDropCard[]>([]);
+  const [liveDropsError, setLiveDropsError] = useState<string | null>(null);
 
   const canScan = watchlist.length > 0 && !busy;
   const topCandidate = useMemo(() => scan?.candidates[0], [scan]);
@@ -39,6 +42,34 @@ export default function OpportunityWatchPanel({ embedded = false }: { embedded?:
   useEffect(() => {
     fetchSignedGateSession().then(setHolderSession).catch(() => setHolderSession(null));
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/mints/opensea-drops?mode=live&limit=12", { cache: "no-store" })
+      .then(async (response) => {
+        const body = (await response.json()) as OpenSeaDropsFeedResult | { ok: false; error: string };
+        if (!body.ok) throw new Error(body.error);
+        if (!cancelled) setLiveDrops(body.items);
+      })
+      .catch((err) => {
+        if (!cancelled) setLiveDropsError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function addDropToWatchlist(drop: OpenSeaDropCard) {
+    const value = drop.slug || drop.contractAddress;
+    const next = Array.from(new Set([value, ...watchlist])).slice(0, 8);
+    setWatchlist(next);
+    writeWatchlist(next);
+    const nextMeta = { ...meta, [value]: meta[value] ?? { status: "watching" as WatchStatus, note: `OpenSea live drop · ${drop.name}` } };
+    setMeta(nextMeta);
+    writeWatchMeta(nextMeta);
+    setChain(drop.chain);
+    setError(null);
+  }
 
   useEffect(() => {
     if (!autoRefreshSeconds || watchlist.length === 0) return;
@@ -163,6 +194,22 @@ export default function OpportunityWatchPanel({ embedded = false }: { embedded?:
               <button type="submit" className="rounded-2xl bg-violet-600 px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-violet-500">Add</button>
             </div>
           </form>
+
+          {liveDrops.length ? (
+            <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-3">
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-700">OpenSea live drops</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {liveDrops.slice(0, 8).map((drop) => (
+                  <button key={`${drop.chain}:${drop.contractAddress}`} type="button" onClick={() => addDropToWatchlist(drop)} title={`Add ${drop.name} to watchlist`} className="flex items-center gap-1.5 rounded-full border border-emerald-300 bg-white px-3 py-1.5 text-xs font-black text-emerald-800 shadow-sm transition hover:bg-emerald-100">
+                    <span className="text-emerald-500">＋</span>
+                    <span className="max-w-[9rem] truncate">{drop.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : liveDropsError ? (
+            <p className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">Live drops feed: {liveDropsError}</p>
+          ) : null}
 
           <div className="mt-4 space-y-2">
             {watchlist.length ? watchlist.map((item) => {
