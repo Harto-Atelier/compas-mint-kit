@@ -14,6 +14,7 @@ import type {
   StageKind,
 } from "@/lib/mint-types";
 import { createWalletAliases, buildLocalCliCommand, buildRunConfigFilename, containsBrowserExecutionSecret, type RunConfigExportError, type RunConfigExportResponse, type RunConfigStageInput } from "@/lib/run-config";
+import type { OpenSeaDropCard, OpenSeaDropsFeedResult, OpenSeaDropsMode } from "@/lib/opensea-drops-feed";
 
 const DEFAULT_QUERY = "";
 const MAX_RECOMMENDED_WALLETS = 20;
@@ -97,11 +98,37 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
   const [maxSpendEth, setMaxSpendEth] = useState(0.25);
   const [concurrency, setConcurrency] = useState(2);
   const [now, setNow] = useState(() => Date.now());
+  const [dropsMode, setDropsMode] = useState<OpenSeaDropsMode>("live");
+  const [dropsFeed, setDropsFeed] = useState<OpenSeaDropsFeedResult | null>(null);
+  const [dropsLoading, setDropsLoading] = useState(true);
+  const [dropsError, setDropsError] = useState<string | null>(null);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/mints/opensea-drops?mode=${dropsMode}&limit=30`, { cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json();
+        if (!response.ok || !body.ok) throw new Error(body.error || "OpenSea drops feed unavailable.");
+        if (!cancelled) setDropsFeed(body as OpenSeaDropsFeedResult);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setDropsFeed(null);
+          setDropsError(err instanceof Error ? err.message : String(err));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setDropsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dropsMode]);
 
   const activeStages = useMemo(() => discovery?.stages ?? [], [discovery]);
   const selectedStages = useMemo(() => activeStages.filter((stage) => (quantities[stage.id] ?? 0) > 0), [activeStages, quantities]);
@@ -183,6 +210,19 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
     } finally {
       setLoading(false);
     }
+  }
+
+  function selectDrop(drop: OpenSeaDropCard) {
+    setQuery(drop.slug || drop.contractAddress);
+    setChain(drop.chain);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function changeDropsMode(nextMode: OpenSeaDropsMode) {
+    if (nextMode === dropsMode) return;
+    setDropsLoading(true);
+    setDropsError(null);
+    setDropsMode(nextMode);
   }
 
   async function handleSchedule() {
@@ -268,8 +308,9 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
     >
       <main className={`mx-auto flex w-full max-w-7xl flex-col gap-6 ${embedded ? "px-4 py-5 sm:px-5" : "px-4 py-6 sm:px-6 lg:px-8"}`}>
         <Hero />
+        <OpenSeaDropsStrip feed={dropsFeed} loading={dropsLoading} error={dropsError} mode={dropsMode} setMode={changeDropsMode} onSelectDrop={selectDrop} />
 
-        <form onSubmit={handleDiscover} className="rounded-[2rem] border border-violet-100 bg-white/90 p-4 shadow-sm backdrop-blur md:p-5">
+        <form onSubmit={handleDiscover} className="rounded-[2rem] border border-violet-100 bg-white/90 p-4 shadow-sm sm:p-5">
           <div className="flex flex-col gap-3 lg:flex-row">
             <label className="flex flex-1 flex-col gap-2 text-xs font-black uppercase tracking-[0.22em] text-slate-500">
               Collection
@@ -387,6 +428,54 @@ function Hero() {
         </div>
       </div>
     </header>
+  );
+}
+
+function OpenSeaDropsStrip({ feed, loading, error, mode, setMode, onSelectDrop }: { feed: OpenSeaDropsFeedResult | null; loading: boolean; error: string | null; mode: OpenSeaDropsMode; setMode: (mode: OpenSeaDropsMode) => void; onSelectDrop: (drop: OpenSeaDropCard) => void }) {
+  const tabs: { mode: OpenSeaDropsMode; label: string }[] = [
+    { mode: "live", label: "Live" },
+    { mode: "upcoming", label: "Upcoming" },
+    { mode: "past", label: "Past" },
+  ];
+  return (
+    <section className="overflow-hidden rounded-[2rem] border border-slate-200 bg-slate-950 p-4 text-white shadow-sm sm:p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-300">OpenSea Drops feed</p>
+          <h2 className="mt-1 text-2xl font-black tracking-tight">Active mints</h2>
+          <p className="mt-1 text-xs font-semibold text-slate-400">Read-only snapshot from OpenSea Drops. Click a card to prefill Discover; signer re-reads onchain config.</p>
+        </div>
+        <div className="flex gap-2">
+          {tabs.map((tab) => (
+            <button key={tab.mode} type="button" onClick={() => setMode(tab.mode)} className={`rounded-full border px-4 py-2 text-xs font-black uppercase tracking-[0.12em] ${mode === tab.mode ? "border-white bg-white text-slate-950" : "border-white/10 bg-white/5 text-slate-300"}`}>{tab.label}</button>
+          ))}
+        </div>
+      </div>
+      {error ? <p className="mt-3 rounded-2xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs font-bold text-amber-200">{error}</p> : null}
+      {loading ? <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">{Array.from({ length: 5 }).map((_, index) => <div key={index} className="h-36 animate-pulse rounded-3xl bg-white/10" />)}</div> : null}
+      {!loading && feed?.items.length ? (
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          {feed.items.map((drop) => (
+            <button key={`${drop.chain}:${drop.contractAddress}`} type="button" onClick={() => onSelectDrop(drop)} className="group relative h-40 overflow-hidden rounded-3xl border border-white/10 bg-slate-900 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300/70">
+              {drop.imageUrl ? <img src={drop.imageUrl} alt="" className="absolute inset-0 h-full w-full object-cover opacity-75 transition group-hover:scale-105" /> : <div className="absolute inset-0 bg-gradient-to-br from-slate-800 to-slate-950" />}
+              <div className="absolute inset-0 bg-gradient-to-t from-black via-black/45 to-transparent" />
+              <div className="absolute inset-x-0 bottom-0 p-4">
+                <div className="flex items-center gap-1.5">
+                  <p className="truncate text-base font-black text-white">{drop.name}</p>
+                  {drop.isVerified ? <span className="shrink-0 text-sky-300">●</span> : null}
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-black">
+                  {drop.isMinting ? <span className="rounded-full border border-emerald-400 bg-emerald-400/15 px-2 py-1 font-mono text-emerald-300">● MINTING NOW</span> : null}
+                  <span className="rounded-full bg-white/10 px-2 py-1 text-slate-200">{drop.chain}</span>
+                </div>
+                <p className="mt-2 text-sm font-bold text-slate-200">Floor: <span className="font-mono text-white">{drop.floorPriceEth ?? "—"}</span> {drop.floorSymbol ?? "ETH"}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {!loading && feed && feed.items.length === 0 ? <p className="mt-3 text-sm font-bold text-slate-400">No {mode} drops returned by OpenSea snapshot. Paste a collection manually.</p> : null}
+    </section>
   );
 }
 
