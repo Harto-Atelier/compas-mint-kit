@@ -11,6 +11,7 @@ import {
   type MarketFighterPolicy,
   type MarketFighterSellMode,
 } from "@/lib/market-fighter";
+import type { LivePressureMetrics } from "@/lib/bot-pressure-live";
 
 const FIELD = "rounded-2xl border border-violet-100 bg-white px-3 py-2 text-sm font-bold text-slate-950 outline-none shadow-sm placeholder:text-slate-400 focus:border-violet-300 focus:ring-4 focus:ring-violet-100";
 const POSITIONS_KEY = "compas.marketFighterPositions.v1";
@@ -21,8 +22,36 @@ export default function MarketFighterPanel({ embedded = false }: { embedded?: bo
   const [positions, setPositions] = useState<HolderPosition[]>(() => readJson<HolderPosition[]>(POSITIONS_KEY) ?? []);
   const [pressureInput, setPressureInput] = useState<BotPressureInput>(() => readJson<BotPressureInput>(PRESSURE_KEY) ?? { freshWalletMintPercent: 20, rapidListingPercent: 20, undercutVelocityPercent: 15, floorDepthEth: 1 });
   const [draft, setDraft] = useState<HolderPosition>({ tokenId: "", collectionAddress: "", chain: "Base", costBasisEth: 0.04, acquiredAt: new Date().toISOString(), status: "held" });
+  const [liveMetrics, setLiveMetrics] = useState<LivePressureMetrics | null>(null);
+  const [liveBusy, setLiveBusy] = useState(false);
+  const [liveError, setLiveError] = useState<string | null>(null);
 
   const plan = useMemo(() => buildMarketFighterPlan({ positions, policy, pressureInput }), [positions, policy, pressureInput]);
+
+  async function fetchLive() {
+    const target = positions[0] ?? (/^0x[a-fA-F0-9]{40}$/.test(draft.collectionAddress.trim()) ? draft : null);
+    if (!target) {
+      setLiveError("Add a position or paste a collection address first.");
+      return;
+    }
+    setLiveBusy(true);
+    setLiveError(null);
+    try {
+      const params = new URLSearchParams({ contract: target.collectionAddress, chain: target.chain.toLowerCase() });
+      const response = await fetch(`/api/market/pressure?${params.toString()}`, { cache: "no-store" });
+      const body = (await response.json()) as { ok: boolean; metrics: LivePressureMetrics };
+      setLiveMetrics(body.metrics);
+      if (body.metrics.error) {
+        setLiveError(`Live read failed: ${body.metrics.error}`);
+      } else {
+        persistPressure({ ...pressureInput, freshWalletMintPercent: body.metrics.suggested.freshWalletMintPercent, suspiciousWalletCount: body.metrics.suspiciousWalletCount ?? undefined });
+      }
+    } catch (err) {
+      setLiveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLiveBusy(false);
+    }
+  }
 
   function persistPolicy(next: MarketFighterPolicy) {
     setPolicy(next);
@@ -87,7 +116,7 @@ export default function MarketFighterPanel({ embedded = false }: { embedded?: bo
       <div className="mt-5 grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
         <div className="grid gap-4">
           <PolicyCard policy={policy} setPolicy={persistPolicy} />
-          <PressureCard pressureInput={pressureInput} setPressureInput={persistPressure} reasons={plan.botPressure.reasons} />
+          <PressureCard pressureInput={pressureInput} setPressureInput={persistPressure} reasons={plan.botPressure.reasons} fetchLive={fetchLive} liveBusy={liveBusy} liveError={liveError} liveMetrics={liveMetrics} />
           <PositionForm draft={draft} setDraft={setDraft} addPosition={addPosition} />
         </div>
 
@@ -170,11 +199,26 @@ function PolicyCard({ policy, setPolicy }: { policy: MarketFighterPolicy; setPol
   );
 }
 
-function PressureCard({ pressureInput, reasons, setPressureInput }: { pressureInput: BotPressureInput; reasons: string[]; setPressureInput: (p: BotPressureInput) => void }) {
+function PressureCard({ fetchLive, liveBusy, liveError, liveMetrics, pressureInput, reasons, setPressureInput }: { pressureInput: BotPressureInput; reasons: string[]; setPressureInput: (p: BotPressureInput) => void; fetchLive: () => Promise<void>; liveBusy: boolean; liveError: string | null; liveMetrics: LivePressureMetrics | null }) {
   return (
     <section className="rounded-3xl border border-red-200 bg-white p-4">
-      <p className="text-xs font-black uppercase tracking-[0.18em] text-red-700">Bot pressure inputs</p>
-      <p className="mt-1 text-xs font-bold text-slate-600">Track fresh-wallet mints, rapid relisting, and undercut velocity. Data source can be OpenSea Events / Alchemy / Blockscout in a later iteration.</p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-red-700">Bot pressure inputs</p>
+          <p className="mt-1 text-xs font-bold text-slate-600">Fresh-wallet mints can be read live from Blockscout transfers. Listing/undercut metrics need a marketplace events key and stay manual.</p>
+        </div>
+        <button type="button" onClick={fetchLive} disabled={liveBusy} className="rounded-full bg-red-600 px-4 py-2 text-xs font-black uppercase tracking-[0.12em] text-white disabled:cursor-not-allowed disabled:opacity-50">{liveBusy ? "Reading…" : "Fetch live"}</button>
+      </div>
+      {liveError ? <p className="mt-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">{liveError}</p> : null}
+      {liveMetrics && !liveMetrics.error ? (
+        <div className="mt-3 grid gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-bold text-emerald-800 sm:grid-cols-2">
+          <span>Sample: {liveMetrics.sampleSize} transfers ({liveMetrics.windowHours ?? "?"}h)</span>
+          <span>Mint share: {liveMetrics.mintSharePercent ?? "—"}%</span>
+          <span>Top receiver: {liveMetrics.topReceiverSharePercent ?? "—"}%</span>
+          <span>Multi-mint wallets: {liveMetrics.suspiciousWalletCount ?? "—"}</span>
+          <span className="sm:col-span-2">Applied fresh-wallet estimate: {liveMetrics.suggested.freshWalletMintPercent}% · {liveMetrics.unavailable.length} metrics unavailable keyless</span>
+        </div>
+      ) : null}
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         <input aria-label="Fresh wallet mint percent" type="number" value={pressureInput.freshWalletMintPercent} onChange={(event) => setPressureInput({ ...pressureInput, freshWalletMintPercent: Number(event.target.value) })} className={FIELD} />
         <input aria-label="Rapid mint-to-list percent" type="number" value={pressureInput.rapidListingPercent} onChange={(event) => setPressureInput({ ...pressureInput, rapidListingPercent: Number(event.target.value) })} className={FIELD} />
