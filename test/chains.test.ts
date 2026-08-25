@@ -20,12 +20,12 @@ test("ethereum mainnet is a first-class built-in chain with its own SeaDrop addr
   assert.equal(resolveSeaDropAddress("ethereum", {}), OPENSEA_SEADROP_ADDRESS);
 });
 
-test("robinhood chain has verified public network parameters but requires explicit SeaDrop configuration", () => {
+test("robinhood chain has verified network parameters but requires explicit RPC and SeaDrop configuration", () => {
   const robinhood = resolveChain("robinhood", {});
   assert.equal(robinhood?.chainId, 4663);
   assert.equal(robinhood?.nativeSymbol, "ETH");
   assert.equal(robinhood?.explorer, "https://robinhoodchain.blockscout.com");
-  assert.equal(robinhood?.rpc.public[0], "https://rpc.mainnet.chain.robinhood.com/");
+  assert.deepEqual(robinhood?.rpc.public, []);
   assert.equal(robinhood?.requiresSeaDropConfig, true);
   assert.equal(robinhood?.seadropAddress, undefined);
   assert.equal(resolveSeaDropAddress("robinhood", {}), undefined);

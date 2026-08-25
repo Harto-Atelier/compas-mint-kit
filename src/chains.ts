@@ -75,9 +75,11 @@ const BUILTIN_CHAINS: ChainProfile[] = [
     nativeSymbol: "ETH",
     requiresSeaDropConfig: true,
     rpc: {
-      public: [
-        "https://rpc.mainnet.chain.robinhood.com/",
-      ],
+      // Robinhood low-latency routes (sequencer/Alchemy/QuickNode) are
+      // operator/admin supplied via RPC_URL_ROBINHOOD or the dedicated
+      // robinhood-low-latency config model; the built-in registry intentionally
+      // has no executable fallback endpoint.
+      public: [],
     },
   },
 ];

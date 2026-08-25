@@ -2,7 +2,7 @@
 
 import { FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import BrowserBroadcastPanel from "@/app/components/BrowserBroadcastPanel";
-import { CHAINS } from "@/lib/chains";
+import { guidedMintChainOptions } from "@/lib/chains";
 import { usePlannerStore } from "@/app/components/PlannerStoreProvider";
 import type {
   FinalProductControls,
@@ -48,6 +48,7 @@ const RPC_STATUS_OPTIONS: { key: FinalProductControls["rpcStatus"]; label: strin
   { key: "ready", label: "Operator confirmed RPC ready" },
   { key: "blocked", label: "RPC blocked / do not execute" },
 ];
+const GUIDED_CHAIN_OPTIONS = guidedMintChainOptions();
 
 const FIELD_CLASS =
   "h-12 rounded-2xl border border-violet-100 bg-white/90 px-4 text-slate-950 outline-none shadow-sm transition placeholder:text-slate-400 focus:border-violet-300 focus:ring-4 focus:ring-violet-100";
@@ -345,7 +346,7 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
                 onChange={(event) => setChain(event.target.value)}
                 className={`${FIELD_CLASS} text-base normal-case tracking-normal`}
               >
-                {CHAINS.map((option) => (
+                {GUIDED_CHAIN_OPTIONS.map((option) => (
                   <option key={option.key} value={option.key}>
                     {option.name}
                   </option>

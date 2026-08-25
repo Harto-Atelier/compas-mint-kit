@@ -52,7 +52,10 @@ interface RpcResult<T> {
 const PUBLIC_RPCS: Record<string, string[]> = {
   ethereum: ["https://ethereum-rpc.publicnode.com", "https://eth.merkle.io", "https://cloudflare-eth.com"],
   base: ["https://mainnet.base.org", "https://base-rpc.publicnode.com"],
-  robinhood: ["https://rpc.mainnet.chain.robinhood.com", "https://sequencer.mainnet.chain.robinhood.com"],
+  // Robinhood execution routes are operator/admin-only and must come from
+  // server env/config. Do not ship Alchemy, QuickNode, or sequencer URLs in the
+  // public browser bundle.
+  robinhood: [],
 };
 
 export async function discoverMint(input: string, chainKey?: string): Promise<MintDiscoveryResponse> {

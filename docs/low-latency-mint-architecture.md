@@ -321,6 +321,18 @@ Only after normal low-latency relay broadcast is correct/tested:
 - `ROBINHOOD_SEQUENCER`
 - `ARMED_LAUNCH`
 
+Robinhood Chain mainnet is chain id `4663`. Phase 1 route configuration is
+fail-closed and local/operator-only:
+
+- direct sequencer route: `ROBINHOOD_SEQUENCER_RPC_URL` and `ROBINHOOD_SEQUENCER=true`;
+- Alchemy route: `ROBINHOOD_ALCHEMY_RPC_URL` (or `ALCHEMY_ROBINHOOD_RPC_URL`);
+- QuickNode route: `ROBINHOOD_QUICKNODE_RPC_URL` (or `QUICKNODE_ROBINHOOD_RPC_URL`);
+- optional config JSON: `ROBINHOOD_LOW_LATENCY_ROUTES_JSON`, with each route declaring `chainId: 4663`.
+
+Do not expose any of those as `NEXT_PUBLIC_*`. The health model consumes samples
+or mocks and returns redacted endpoint health plus p50/p95 latency; it does not
+send transactions.
+
 Enable order:
 
 1. development/admin holder;

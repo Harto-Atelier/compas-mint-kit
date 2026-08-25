@@ -24,6 +24,25 @@ export const CHAINS: ChainOption[] = [
   },
 ];
 
+export const GUIDED_DEFAULT_CHAINS: ChainOption[] = CHAINS.filter((chain) => chain.key === "ethereum" || chain.key === "base");
+
+export type GuidedChainGate = {
+  admin?: boolean;
+  lowLatencyBroadcast?: boolean;
+  multiRpc?: boolean;
+  robinhoodSequencer?: boolean;
+};
+
+export function guidedMintChainOptions(gate: GuidedChainGate = {}): ChainOption[] {
+  const robinhoodAllowed = Boolean(
+    gate.admin &&
+    gate.lowLatencyBroadcast &&
+    gate.multiRpc &&
+    gate.robinhoodSequencer,
+  );
+  return robinhoodAllowed ? CHAINS : GUIDED_DEFAULT_CHAINS;
+}
+
 const CHAIN_ALIASES: Record<string, string> = {
   eth: "ethereum",
   ethereum: "ethereum",
