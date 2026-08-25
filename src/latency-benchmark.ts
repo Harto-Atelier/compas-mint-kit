@@ -318,7 +318,8 @@ export async function runBenchmarkCli(rawArgs: string[] = process.argv.slice(2))
     return;
   }
 
-  const config = parseBenchmarkConfig(loadConfigPayload(args), process.env);
+  const rawConfig = loadConfigPayload(args);
+  const config = parseBenchmarkConfig(args.url ? withCliUrlProvider(rawConfig, args) : rawConfig, process.env);
   applyArgOverrides(config, args);
   const report = await runBenchmark(config);
   const json = JSON.stringify(report, null, 2);
@@ -643,6 +644,23 @@ function loadConfigPayload(args: ParsedBenchmarkArgs): unknown {
   } catch (err: any) {
     throw new Error(`Failed to read benchmark config ${args.configPath}: ${redactBenchmarkValue(err.message)}`);
   }
+}
+
+function withCliUrlProvider(raw: unknown, args: ParsedBenchmarkArgs): unknown {
+  const base = isRecord(raw) ? { ...raw } : {};
+  const existingProviders = Array.isArray(base.providers) ? base.providers : [];
+  return {
+    ...base,
+    providers: [
+      ...existingProviders,
+      {
+        url: args.url,
+        label: args.label,
+        provider: args.provider,
+        region: args.region,
+      },
+    ],
+  };
 }
 
 function applyArgOverrides(config: BenchmarkConfig, args: ParsedBenchmarkArgs): void {
