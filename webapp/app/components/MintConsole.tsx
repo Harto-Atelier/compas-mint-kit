@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import { FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import BrowserBroadcastPanel from "@/app/components/BrowserBroadcastPanel";
 import { CHAINS } from "@/lib/chains";
 import { usePlannerStore } from "@/app/components/PlannerStoreProvider";
@@ -102,6 +102,16 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
   const [dropsFeed, setDropsFeed] = useState<OpenSeaDropsFeedResult | null>(null);
   const [dropsLoading, setDropsLoading] = useState(true);
   const [dropsError, setDropsError] = useState<string | null>(null);
+  const reviewRef = useRef<HTMLDivElement>(null);
+  const scrollToReviewAfterDiscovery = useRef(false);
+
+  useEffect(() => {
+    if (!discovery || !scrollToReviewAfterDiscovery.current) return;
+    scrollToReviewAfterDiscovery.current = false;
+    window.requestAnimationFrame(() => {
+      reviewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, [discovery]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
@@ -173,9 +183,9 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
     [targetChainKey, rpcStatus, maxSpendEth, concurrency],
   );
 
-  async function handleDiscover(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (containsBrowserExecutionSecret(query.trim())) {
+  async function runDiscovery(discoveryQuery: string, discoveryChain: string, openReview = false) {
+    const trimmedQuery = discoveryQuery.trim();
+    if (containsBrowserExecutionSecret(trimmedQuery)) {
       setError("Do not paste private keys into the mint discovery form. Enter a collection slug, OpenSea URL, or public contract address only.");
       setQuery("");
       setDiscovery(null);
@@ -185,26 +195,27 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
       return;
     }
 
+    if (!trimmedQuery) {
+      setError("Enter an OpenSea slug, collection URL, item URL, or public contract address.");
+      return;
+    }
+
     setLoading(true);
     setError(null);
     setExportStatus(null);
     setLastExportFilename(null);
     clearScheduleReceipt();
+    scrollToReviewAfterDiscovery.current = openReview;
 
     try {
-      const trimmedQuery = query.trim();
-      if (!trimmedQuery) {
-        setError("Enter an OpenSea slug, collection URL, item URL, or public contract address.");
-        setLoading(false);
-        return;
-      }
-      const params = new URLSearchParams({ q: trimmedQuery, chain });
+      const params = new URLSearchParams({ q: trimmedQuery, chain: discoveryChain });
       const response = await fetch(`/api/mints/discover?${params.toString()}`, { cache: "no-store" });
       const body = (await response.json()) as MintDiscoveryResponse | MintDiscoveryError;
       if (!response.ok || !body.ok) throw new Error(body.ok ? "Discovery failed." : body.error);
       setDiscovery(body);
       setStageQuantity("public", body.stages.some((stage) => stage.id === "public") ? Math.max(quantities.public, 1) : 0);
     } catch (err) {
+      scrollToReviewAfterDiscovery.current = false;
       setError(err instanceof Error ? err.message : String(err));
       setDiscovery(null);
     } finally {
@@ -212,10 +223,16 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
     }
   }
 
-  function selectDrop(drop: OpenSeaDropCard) {
-    setQuery(drop.slug || drop.contractAddress);
+  async function handleDiscover(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await runDiscovery(query, chain);
+  }
+
+  async function selectDrop(drop: OpenSeaDropCard) {
+    const nextQuery = drop.slug || drop.contractAddress;
+    setQuery(nextQuery);
     setChain(drop.chain);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    await runDiscovery(nextQuery, drop.chain, true);
   }
 
   function changeDropsMode(nextMode: OpenSeaDropsMode) {
@@ -351,7 +368,7 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
         {error ? <div className="rounded-3xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">{error}</div> : null}
 
         {discovery ? (
-          <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+          <div ref={reviewRef} className="scroll-mt-6 grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
             <section className="flex flex-col gap-6">
               <CollectionPanel discovery={discovery} />
               <ScheduleControls
