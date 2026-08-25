@@ -115,3 +115,23 @@ test("guided recovery is secret-free, persistent, zero-buffered by default, and 
   assert.match(source, /Collection · \{discovery\.collection\.name\}/);
   assert.match(source, /Maximum network gas · \{formatEther/);
 });
+
+test("guided execution mode surface is feature-flagged, post-simulation, and non-executable", () => {
+  assert.match(source, /GUIDED_EXECUTION_MODE_SURFACE_ENABLED/);
+  assert.match(source, /NEXT_PUBLIC_GUIDED_EXECUTION_MODE_SURFACE/);
+  assert.match(source, /<ExecutionModeSurface simulationComplete=\{simulationComplete\} \/>/);
+  assert.match(source, /if \(!GUIDED_EXECUTION_MODE_SURFACE_ENABLED \|\| !simulationComplete\) return null/);
+  assert.match(source, /Execution mode/);
+  assert.match(source, /Standard/);
+  assert.match(source, /Low-latency/);
+  assert.match(source, /Armed Launch \(Advanced\)/);
+  assert.match(source, /mocked placeholder state/);
+  assert.match(source, /Prepared/);
+  assert.match(source, /Signed/);
+  assert.match(source, /Ready/);
+  assert.match(source, /Browser signs locally/);
+  assert.match(source, /relay receives raw signed tx only/);
+  assert.match(source, /no keys/);
+  assert.match(source, /Phase 2/);
+  assert.doesNotMatch(source, /uploadLowLatency|sendLowLatency|startArmedLaunch|relay\.send|relay\.upload/);
+});

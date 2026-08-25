@@ -70,6 +70,7 @@ type GuidedHolderFlowProps = {
 
 const FIELD = "h-11 w-full rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-card)] px-3 text-sm font-bold text-[color:var(--compas-ink)] outline-none focus:border-[color:var(--compas-accent)]";
 const CARD = "rounded-[1.75rem] border border-[color:var(--compas-line)] bg-[color:var(--compas-card)] p-4 sm:p-5";
+const GUIDED_EXECUTION_MODE_SURFACE_ENABLED = process.env.NEXT_PUBLIC_GUIDED_EXECUTION_MODE_SURFACE === "1" || process.env.NEXT_PUBLIC_GUIDED_EXECUTION_MODE_SURFACE === "true";
 
 export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: GuidedHolderFlowProps) {
   const [holder, setHolder] = useState<CompasGateSession | null>(null);
@@ -891,6 +892,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
           <div className={CARD}>
             <StepHeading number="07" title="Explicit final live mint consent" body="This is the only live mint gate. It signs each exact simulated burner row once and never sends a row again automatically." />
             <div className="mt-4 grid gap-3 sm:grid-cols-3"><Metric label="Exact rows" value={transactions.length} /><Metric label="Maximum mint value" value={`${formatEther(executionPlan?.maxTotalWei ?? BigInt(0))} ETH`} prominent /><Metric label="Verified recipient" value={holder ? maskVaultAddress(holder.address) : "missing"} /></div>
+            <ExecutionModeSurface simulationComplete={simulationComplete} />
             <TransactionRows transactions={transactions} receipts={receipts} />
             <button type="button" onClick={openLiveConsent} disabled={!simulationComplete || Boolean(busy)} className="mt-4 w-full rounded-2xl bg-red-600 px-5 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40">Review final live mint consent</button>
           </div>
@@ -961,6 +963,46 @@ function TransactionRows({ transactions, receipts }: { transactions: BrowserPrep
 
 function StatusLegend({ status }: { status: GuidedMintReceipt["status"] }) {
   return <span className="rounded-full border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] px-3 py-1.5">{status}</span>;
+}
+
+type LowLatencyPlaceholderStatus = { label: "Prepared" | "Signed" | "Ready"; value: string };
+
+function ExecutionModeSurface({ simulationComplete }: { simulationComplete: boolean }) {
+  if (!GUIDED_EXECUTION_MODE_SURFACE_ENABLED || !simulationComplete) return null;
+
+  const lowLatencyPlaceholderState: LowLatencyPlaceholderStatus[] = [
+    { label: "Prepared", value: "prepared from mocked placeholder state" },
+    { label: "Signed", value: "signed placeholder only" },
+    { label: "Ready", value: "ready placeholder; relay primitive not integrated" },
+  ];
+
+  return (
+    <section className="mt-4 rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-4" aria-label="Execution mode">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-[color:var(--compas-accent)]">Execution mode</p>
+          <p className="mt-1 text-sm font-bold text-[color:var(--compas-muted)]">Feature-flag preview only after simulation. Browser signs locally; relay receives raw signed tx only; no keys. No relay upload or broadcast button is wired until primitives are integrated.</p>
+        </div>
+        <span className="rounded-full border border-[color:var(--compas-line)] bg-[color:var(--compas-card)] px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">Non-executable</span>
+      </div>
+      <div className="mt-3 grid gap-2 lg:grid-cols-3">
+        <article className="rounded-2xl border-2 border-[color:var(--compas-accent)] bg-[color:var(--compas-card)] p-3">
+          <div className="flex items-center justify-between gap-2"><h3 className="text-sm font-black">Standard</h3><span className="text-[10px] font-black uppercase tracking-[0.14em] text-[color:var(--compas-accent)]">Current path</span></div>
+          <p className="mt-2 text-xs font-bold text-[color:var(--compas-muted)]">Keep the existing explicit final live consent flow. This card does not execute anything.</p>
+        </article>
+        <article className="rounded-2xl border border-dashed border-[color:var(--compas-line)] bg-[color:var(--compas-card)] p-3">
+          <div className="flex items-center justify-between gap-2"><h3 className="text-sm font-black">Low-latency</h3><span className="text-[10px] font-black uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">Preview</span></div>
+          <div className="mt-2 grid gap-1">
+            {lowLatencyPlaceholderState.map((item) => <p key={item.label} className="rounded-xl bg-[color:var(--compas-soft)] px-3 py-2 text-xs font-bold"><span className="font-black">{item.label}</span> · {item.value}</p>)}
+          </div>
+        </article>
+        <article className="rounded-2xl border border-dashed border-[color:var(--compas-line)] bg-[color:var(--compas-card)] p-3 opacity-70">
+          <div className="flex items-center justify-between gap-2"><h3 className="text-sm font-black">Armed Launch (Advanced)</h3><span className="text-[10px] font-black uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">Disabled</span></div>
+          <p className="mt-2 text-xs font-bold text-[color:var(--compas-muted)]">Advanced launch timing stays disabled until Phase 2. No scheduler, relay, upload, signing, or broadcast primitive is connected from this Guide surface.</p>
+        </article>
+      </div>
+    </section>
+  );
 }
 
 function NumberInput({ label, value, onChange, min }: { label: string; value: number; onChange: (value: number) => void; min: number }) {
