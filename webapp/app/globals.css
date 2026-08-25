@@ -52,14 +52,11 @@ button {
   --compas-hero-muted: rgba(245, 240, 223, 0.68);
   --compas-hero-line: rgba(245, 240, 223, 0.24);
   --compas-hero-card: rgba(255, 255, 245, 0.07);
-  --compas-bg-art:
-    radial-gradient(circle at 13% 16%, rgba(255, 106, 26, 0.14), transparent 24%),
-    radial-gradient(circle at 86% 8%, rgba(158, 255, 90, 0.08), transparent 18%),
-    linear-gradient(180deg, #060604 0%, #10100b 58%, #2a1007 100%);
+  --compas-bg-art: #000000;
   --compas-grain:
     linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px);
-  --compas-radius: 0px;
+  --compas-radius: 20px;
   font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
@@ -101,9 +98,7 @@ button {
   --compas-hero-muted: rgba(216, 255, 222, 0.62);
   --compas-hero-line: rgba(117, 255, 143, 0.34);
   --compas-hero-card: rgba(117, 255, 143, 0.06);
-  --compas-bg-art:
-    radial-gradient(circle at 20% 14%, rgba(117, 255, 143, 0.14), transparent 24%),
-    linear-gradient(180deg, #020403 0%, #051107 100%);
+  --compas-bg-art: #000000;
   --compas-grain:
     repeating-linear-gradient(0deg, rgba(117,255,143,0.05) 0 1px, transparent 1px 4px),
     linear-gradient(90deg, rgba(117,255,143,0.04) 1px, transparent 1px);
@@ -125,6 +120,7 @@ button {
   width: 48px;
   place-items: center;
   border: 1px solid var(--compas-line);
+  border-radius: 14px;
   background: var(--compas-accent);
   color: var(--compas-accent-ink);
   box-shadow: 6px 6px 0 var(--compas-shadow);
@@ -144,6 +140,18 @@ button {
   height: 7px;
   width: 7px;
   background: currentColor;
+}
+
+.compas-console [class*="rounded-none"] {
+  border-radius: 16px !important;
+}
+
+.compas-console :is(section, article, form)[class*="border"] {
+  border-radius: 20px;
+}
+
+.compas-console :is(button, input, select, textarea)[class*="border"] {
+  border-radius: 12px;
 }
 
 .compas-console[data-skin="dark"] :is([class*="bg-white"], [class*="bg-violet-50"], [class*="bg-slate-50"], [class*="bg-neutral-50"]),

@@ -288,7 +288,7 @@ const skinOptions: Array<{ skin: ConsoleSkin; label: string; swatch: string }> =
 function SkinSwitcher({ skin, setSkin }: { skin: ConsoleSkin; setSkin: (skin: ConsoleSkin) => void }) {
   return (
     <div
-      className="fixed bottom-[4.65rem] left-1/2 z-40 flex -translate-x-1/2 items-center gap-0.5 border border-[color:var(--compas-line)] bg-[color:var(--compas-card)] p-1 shadow-[4px_4px_0_var(--compas-shadow)] backdrop-blur-xl sm:bottom-3 lg:bottom-4"
+      className="fixed bottom-[4.65rem] left-1/2 z-40 flex -translate-x-1/2 items-center gap-0.5 rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-card)] p-1 shadow-[4px_4px_0_var(--compas-shadow)] backdrop-blur-xl sm:bottom-3 lg:bottom-4"
       role="group"
       aria-label="Console color mode"
     >
@@ -300,7 +300,7 @@ function SkinSwitcher({ skin, setSkin }: { skin: ConsoleSkin; setSkin: (skin: Co
           aria-pressed={skin === item.skin}
           title={`${item.label} color mode`}
           className={cx(
-            "flex h-8 items-center gap-1.5 border px-2 text-[9px] font-black uppercase tracking-[0.14em] transition sm:h-9 sm:px-2.5 sm:text-[10px]",
+            "flex h-8 items-center gap-1.5 rounded-xl border px-2 text-[9px] font-black uppercase tracking-[0.14em] transition sm:h-9 sm:px-2.5 sm:text-[10px]",
             skin === item.skin
               ? "border-[color:var(--compas-accent)] bg-[color:var(--compas-accent)] text-[color:var(--compas-accent-ink)]"
               : "border-transparent text-[color:var(--compas-muted)] hover:border-[color:var(--compas-line)] hover:text-[color:var(--compas-ink)]",
