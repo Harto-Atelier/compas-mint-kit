@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useMemo, useState } from "react";
 import { DispersePanel } from "@/app/components/DisperseAcoPanels";
+import GuidedHolderFlow from "@/app/components/GuidedHolderFlow";
 import MintConsole from "@/app/components/MintConsole";
 import OpportunityWatchPanel from "@/app/components/OpportunityWatchPanel";
 import MarketFighterPanel from "@/app/components/MarketFighterPanel";
@@ -13,14 +14,19 @@ import { usePlannerStore } from "@/app/components/PlannerStoreProvider";
 import { countUnlockedVaultWallets } from "@/lib/planner-store";
 import CompasGate from "@/components/CompasGate";
 
-export type MainTab = "Mints" | "Watch" | "Market" | "Wallets" | "Vault" | "Disperse" | "Reports";
+export type MainTab = "Guide" | "Mints" | "Watch" | "Market" | "Wallets" | "Vault" | "Disperse" | "Reports";
 type ConsoleSkin = "light" | "dark" | "coded";
 
-const mainTabs: MainTab[] = ["Mints", "Watch", "Market", "Wallets", "Vault", "Disperse", "Reports"];
+const mainTabs: MainTab[] = ["Guide", "Mints", "Watch", "Market", "Wallets", "Vault", "Disperse", "Reports"];
 
 const DOCS_URL = "https://github.com/Harto-Atelier/compas-mint-kit#readme";
 
 const tabCopy: Record<MainTab, { eyebrow: string; title: string; body: string }> = {
+  Guide: {
+    eyebrow: "Holder guide",
+    title: "Move from verified holder to mint simulation, one decision at a time.",
+    body: "Canonical encrypted burners, exact funding rows, explicit connected-holder transfers, and holder-routed simulation.",
+  },
   Mints: {
     eyebrow: "Mint command",
     title: "Plan the drop before anything signs.",
@@ -97,31 +103,41 @@ function Sidebar({
           </div>
         </div>
 
-        <nav className="mt-3 grid min-w-0 grid-cols-2 gap-1.5 min-[360px]:grid-cols-3 sm:mt-5 sm:grid-cols-1 sm:gap-2" aria-label="Mint console sections">
-          {mainTabs.map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => setActive(tab)}
-              className={cx(
-                "group flex min-h-11 min-w-0 items-center justify-center rounded-xl px-2 py-2 text-center text-[11px] font-extrabold transition sm:justify-between sm:rounded-2xl sm:px-4 sm:py-3 sm:text-left sm:text-sm",
-                active === tab
-                  ? "bg-[color:var(--compas-accent)] text-[color:var(--compas-accent-ink)] shadow-[8px_8px_0_var(--compas-shadow)]"
-                  : "text-[color:var(--compas-muted)] hover:bg-[color:var(--compas-soft)] hover:text-[color:var(--compas-ink)]",
-              )}
-            >
-              <span className="flex min-w-0 items-center gap-1.5 sm:gap-3">
-                <span
+        <nav className="mt-3 grid min-w-0 gap-2 sm:mt-5" aria-label="Mint console sections">
+          <button
+            type="button"
+            onClick={() => setActive("Guide")}
+            className={cx(
+              "group flex min-h-11 min-w-0 items-center justify-between rounded-2xl px-4 py-3 text-left text-sm font-extrabold transition",
+              active === "Guide"
+                ? "bg-[color:var(--compas-accent)] text-[color:var(--compas-accent-ink)] shadow-[8px_8px_0_var(--compas-shadow)]"
+                : "text-[color:var(--compas-muted)] hover:bg-[color:var(--compas-soft)] hover:text-[color:var(--compas-ink)]",
+            )}
+          >
+            <span>Holder guide</span>
+            <span className="text-xs font-black">→</span>
+          </button>
+          <details className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-2" open={active !== "Guide"}>
+            <summary className="cursor-pointer px-2 py-1 text-xs font-black uppercase tracking-[0.16em] text-[color:var(--compas-muted)]">Advanced tools</summary>
+            <div className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-1">
+              {mainTabs.filter((tab) => tab !== "Guide").map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setActive(tab)}
                   className={cx(
-                    "hidden h-2.5 w-2.5 rounded-full sm:block",
-                    active === tab ? "bg-white" : "bg-violet-300 group-hover:bg-violet-500",
+                    "group flex min-h-10 min-w-0 items-center justify-between rounded-xl px-3 py-2 text-left text-xs font-extrabold transition sm:text-sm",
+                    active === tab
+                      ? "bg-[color:var(--compas-accent)] text-[color:var(--compas-accent-ink)]"
+                      : "text-[color:var(--compas-muted)] hover:bg-[color:var(--compas-card)] hover:text-[color:var(--compas-ink)]",
                   )}
-                />
-                <span className="truncate">{tab}</span>
-              </span>
-              <span className={cx("hidden text-xs font-black sm:inline", active === tab ? "text-white/75" : "text-slate-400")}>→</span>
-            </button>
-          ))}
+                >
+                  <span className="truncate">{tab}</span>
+                  <span className="text-xs font-black">→</span>
+                </button>
+              ))}
+            </div>
+          </details>
         </nav>
 
         <div className="mt-3 rounded-[1.25rem] border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-3 sm:mt-5 sm:rounded-[1.5rem] sm:p-4 dark:border-violet-400/15 dark:bg-violet-400/8">
@@ -267,11 +283,11 @@ function OperatorFlow({ active, setActive }: { active: MainTab; setActive: (tab:
 
 function MobileBottomNav({ active, setActive }: { active: MainTab; setActive: (tab: MainTab) => void }) {
   const items: Array<{ tab: MainTab; label: string }> = [
+    { tab: "Guide", label: "Guide" },
     { tab: "Mints", label: "Drop" },
-    { tab: "Watch", label: "Watch" },
-    { tab: "Wallets", label: "Wallets" },
     { tab: "Vault", label: "Vault" },
-    { tab: "Reports", label: "Review" },
+    { tab: "Disperse", label: "Fund" },
+    { tab: "Reports", label: "Reports" },
   ];
 
   return (
@@ -332,7 +348,11 @@ function SkinSwitcher({ skin, setSkin }: { skin: ConsoleSkin; setSkin: (skin: Co
   );
 }
 
-function MainPanel({ active }: { active: MainTab }) {
+function MainPanel({ active, setActive }: { active: MainTab; setActive: (tab: MainTab) => void }) {
+  if (active === "Guide") {
+    return <GuidedHolderFlow embedded onOpenAdvanced={setActive} />;
+  }
+
   if (active === "Mints") {
     return <MintConsole embedded />;
   }
@@ -371,7 +391,7 @@ function formatLaunchId(activeLaunchId: string): string {
   return date.toLocaleDateString(undefined, { month: "short", day: "2-digit" });
 }
 
-export default function MintConsoleShell({ initialTab = "Mints" }: { initialTab?: MainTab }) {
+export default function MintConsoleShell({ initialTab = "Guide" }: { initialTab?: MainTab }) {
   const [activeTab, setActiveTab] = useState<MainTab>(initialTab);
   const [skin, setSkin] = useState<ConsoleSkin>("dark");
   const { wallets, scheduleReceipt, activeLaunchId } = usePlannerStore();
@@ -388,19 +408,25 @@ export default function MintConsoleShell({ initialTab = "Mints" }: { initialTab?
         <div className="relative z-10 mx-auto grid max-w-[1480px] min-w-0 gap-5 lg:grid-cols-[300px_minmax(0,1fr)]">
           <Sidebar active={activeTab} setActive={setActiveTab} stagedWallets={wallets.length} />
           <div className="grid min-w-0 gap-5">
-            <ReportStrip
-              stagedWallets={wallets.length}
-              savedSchedules={savedSchedules}
-              unlockedVaultWallets={unlockedVaultWallets}
-              skin={skin}
-              setSkin={setSkin}
-            />
-            <StatusRow activeLaunchId={activeLaunchId} />
-            <OperatorFlow active={activeTab} setActive={setActiveTab} />
-            <div className="rounded-[1.5rem] border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] px-4 py-3 text-sm font-bold text-[color:var(--compas-ink)] backdrop-blur">
-              Active module: <span className="font-black">{activeTab}</span> · {tabSummary}
-            </div>
-            <MainPanel active={activeTab} />
+            {activeTab === "Guide" ? (
+              <MainPanel active={activeTab} setActive={setActiveTab} />
+            ) : (
+              <>
+                <ReportStrip
+                  stagedWallets={wallets.length}
+                  savedSchedules={savedSchedules}
+                  unlockedVaultWallets={unlockedVaultWallets}
+                  skin={skin}
+                  setSkin={setSkin}
+                />
+                <StatusRow activeLaunchId={activeLaunchId} />
+                <OperatorFlow active={activeTab} setActive={setActiveTab} />
+                <div className="rounded-[1.5rem] border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] px-4 py-3 text-sm font-bold text-[color:var(--compas-ink)] backdrop-blur">
+                  Active module: <span className="font-black">{activeTab}</span> · {tabSummary}
+                </div>
+                <MainPanel active={activeTab} setActive={setActiveTab} />
+              </>
+            )}
           </div>
         </div>
       </div>

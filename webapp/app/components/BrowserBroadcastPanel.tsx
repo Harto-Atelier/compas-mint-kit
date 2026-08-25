@@ -16,6 +16,9 @@ import {
   buildBrowserGasStrategy,
   browserChainConfig,
   buildBrowserMintPlan,
+  invalidateBrowserMintTransactions,
+  isTerminalBrowserMint,
+  revokePreparedBrowserMintSigners,
   simulatePreparedBrowserMint,
   reviewPreparedBrowserMintCalldata,
   type BrowserBroadcastChainKey,
@@ -51,13 +54,15 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages }
   const [error, setError] = useState<string | null>(null);
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   const [broadcastConsent, setBroadcastConsent] = useState(false);
+  const [broadcastConsentBinding, setBroadcastConsentBinding] = useState<string | null>(null);
   const [autopilotHandoff, setAutopilotHandoff] = useState<CompasAutopilotHandoff | null>(() => readAutopilotHandoff());
   const [maxFeeGwei, setMaxFeeGwei] = useState(() => autopilotHandoff?.signerDefaults.maxGasGwei ?? 0.08);
   const [priorityFeeGwei, setPriorityFeeGwei] = useState(0.02);
+  const [maxTotalEth, setMaxTotalEth] = useState(() => autopilotHandoff?.signerDefaults.maxTotalEth ?? 0.05);
   const [retryLimit, setRetryLimit] = useState(2);
   const [escalationPercent, setEscalationPercent] = useState(15);
   const [nonceMode, setNonceMode] = useState<"sequential" | "parallel">("sequential");
-  const [recipientMode, setRecipientMode] = useState<BrowserMintRecipientMode>(() => autopilotHandoff ? "holder" : "payer");
+  const [recipientMode, setRecipientMode] = useState<BrowserMintRecipientMode>("holder");
   const [customRecipientAddress, setCustomRecipientAddress] = useState("");
   const [holderSession, setHolderSession] = useState<CompasGateSession | null>(null);
 
@@ -65,9 +70,9 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages }
     fetchSignedGateSession().then(setHolderSession).catch(() => setHolderSession(null));
   }, []);
 
+  const handoffMatchesCollection = autopilotHandoff?.signerDefaults.collectionAddress.toLowerCase() === collection.address.toLowerCase();
   const selectedStages = useMemo<BrowserMintStageInput[]>(
     () => {
-      const handoffMatchesCollection = autopilotHandoff?.signerDefaults.collectionAddress.toLowerCase() === collection.address.toLowerCase();
       return stages.map((stage) => ({
         id: stage.id,
         label: stage.label,
@@ -77,7 +82,7 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages }
         feeRecipient: stage.feeRecipient ?? null,
       }));
     },
-    [autopilotHandoff, collection.address, quantities, stages],
+    [autopilotHandoff, handoffMatchesCollection, quantities, stages],
   );
   const executableStageCount = selectedStages.filter((stage) => stage.source === "onchain-seadrop" && stage.quantity > 0 && stage.feeRecipient).length;
   const unlockedVault = useMemo<UnlockedLaunchVault | null>(() => {
@@ -95,19 +100,32 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages }
   }, [vault]);
   const chain = useMemo(() => browserChainConfig({ chainKey, rpcUrl, seaDropAddress }), [chainKey, rpcUrl, seaDropAddress]);
   const gasStrategy = useMemo(() => buildBrowserGasStrategy({ maxFeeGwei, priorityFeeGwei, retryLimit, escalationPercent, nonceMode }), [maxFeeGwei, priorityFeeGwei, retryLimit, escalationPercent, nonceMode]);
-  const simulatedCount = transactions.filter((tx) => tx.status === "simulated").length;
+  const activeTransactions = useMemo(() => transactions.filter((tx) => !isTerminalBrowserMint(tx)), [transactions]);
+  const simulatedCount = activeTransactions.filter((tx) => tx.status === "simulated").length;
   const broadcastCount = transactions.filter((tx) => tx.status === "broadcast").length;
   const failedCount = transactions.filter((tx) => tx.status === "failed").length;
   const canExportBrowserReport = transactions.length > 0 && transactions.some((tx) => tx.status === "broadcast" || tx.status === "failed" || tx.status === "simulated");
   const safetyReviews = useMemo(
-    () => transactions.map((tx) => ({
+    () => activeTransactions.map((tx) => ({
       tx,
       review: reviewPreparedBrowserMintCalldata(tx, { collectionAddress: collection.address, holderRecipientAddress: holderSession?.address, maxQuantity: autopilotHandoff?.signerDefaults.quantity ?? 1 }),
     })),
-    [transactions, collection.address, holderSession, autopilotHandoff],
+    [activeTransactions, collection.address, holderSession, autopilotHandoff],
   );
   const allSafetyChecksPass = safetyReviews.length === 0 || safetyReviews.every((item) => item.review.readyForBroadcast);
-  const canOpenBroadcast = transactions.length > 0 && simulatedCount === transactions.length && allSafetyChecksPass;
+  const activeBinding = activeTransactions.length > 0 && activeTransactions.every((tx) => tx.binding === activeTransactions[0].binding) ? activeTransactions[0].binding : null;
+  const activeTotalValueWei = activeTransactions.reduce((total, tx) => total + tx.request.value, BigInt(0));
+  const canOpenBroadcast = Boolean(activeBinding) && activeTransactions.length > 0 && simulatedCount === activeTransactions.length && allSafetyChecksPass;
+
+  useEffect(() => {
+    const invalidationTimer = window.setTimeout(() => {
+      setTransactions((current) => current.some((tx) => !isTerminalBrowserMint(tx)) ? invalidateBrowserMintTransactions(current) : current);
+      setBroadcastOpen(false);
+      setBroadcastConsent(false);
+      setBroadcastConsentBinding(null);
+    }, 0);
+    return () => window.clearTimeout(invalidationTimer);
+  }, [browserWalletCount, chainKey, collection.address, customRecipientAddress, holderSession?.address, maxTotalEth, recipientMode, rpcUrl, seaDropAddress, selectedStages]);
 
   async function handleUnlock(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -119,15 +137,30 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages }
     setBusy("Unlocking encrypted launch vault…");
     try {
       const payload = await decryptLaunchVaultBackup(encryptedBackup, unlockPassphrase);
+      revokePreparedBrowserMintSigners(transactions);
+      setTransactions((current) => current.filter(isTerminalBrowserMint));
       setVault(payload);
       setBrowserWalletCount(Math.max(1, payload.wallets.length));
       setUnlockPassphrase("");
+      setBroadcastOpen(false);
+      setBroadcastConsent(false);
+      setBroadcastConsentBinding(null);
       setNotice("Vault unlocked in memory. Private keys are not displayed and no server API receives them.");
     } catch {
       setError("Unlock failed. Check the vault passphrase.");
     } finally {
       setBusy(null);
     }
+  }
+
+  function handleDropKeys() {
+    revokePreparedBrowserMintSigners(transactions);
+    setTransactions((current) => current.filter(isTerminalBrowserMint));
+    setVault(null);
+    setBroadcastOpen(false);
+    setBroadcastConsent(false);
+    setBroadcastConsentBinding(null);
+    setNotice("Unlocked signer authority was revoked and keys were dropped from browser memory. Terminal broadcast rows were retained for reporting.");
   }
 
   function handlePrepare() {
@@ -144,18 +177,31 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages }
         recipientMode,
         holderRecipientAddress: holderSession?.address,
         customRecipientAddress,
+        maxTotalEth,
       });
-      setTransactions(plan.transactions);
-      setNotice(`Prepared ${plan.transactions.length} transaction(s). Dry-run simulation is required before broadcast.`);
+      const terminalRows = invalidateBrowserMintTransactions(transactions);
+      const alreadyBroadcast = new Set(terminalRows.map((tx) => `${tx.binding}:${tx.id}`));
+      const next = [...terminalRows, ...plan.transactions.filter((tx) => !alreadyBroadcast.has(`${tx.binding}:${tx.id}`))];
+      setTransactions(next);
+      setBroadcastOpen(false);
+      setBroadcastConsent(false);
+      setBroadcastConsentBinding(null);
+      const preparedCount = next.length - terminalRows.length;
+      if (preparedCount === 0) {
+        setNotice("This exact bound transaction plan was already broadcast. Change the reviewed execution inputs before preparing another run.");
+      } else {
+        setNotice(`Prepared ${preparedCount} transaction(s). Dry-run simulation is required before broadcast.`);
+      }
     } catch (err) {
-      setTransactions([]);
+      setTransactions((current) => invalidateBrowserMintTransactions(current));
       setError(err instanceof Error ? err.message : "Could not prepare browser transactions.");
     }
   }
 
   async function handleSimulate() {
     resetMessages();
-    let current = transactions;
+    let current = activeTransactions;
+    let terminalRows = transactions.filter(isTerminalBrowserMint);
     if (current.length === 0) {
       try {
         const plan = buildBrowserMintPlan({
@@ -169,20 +215,28 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages }
           recipientMode,
           holderRecipientAddress: holderSession?.address,
           customRecipientAddress,
+          maxTotalEth,
         });
-        current = plan.transactions;
-        setTransactions(current);
+        terminalRows = invalidateBrowserMintTransactions(transactions);
+        const alreadyBroadcast = new Set(terminalRows.map((tx) => `${tx.binding}:${tx.id}`));
+        current = plan.transactions.filter((tx) => !alreadyBroadcast.has(`${tx.binding}:${tx.id}`));
+        setTransactions([...terminalRows, ...current]);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Could not prepare browser transactions.");
         return;
       }
     }
+    if (current.length === 0) {
+      setNotice("This exact bound transaction plan was already broadcast. No transaction was simulated or sent again.");
+      return;
+    }
 
     setBusy("Simulating transactions against the selected RPC…");
-    const next: BrowserPreparedMint[] = [];
-    for (const tx of current) {
-      setTransactions([...next, { ...tx, status: "prepared" }]);
-      next.push(await simulatePreparedBrowserMint(tx));
+    const next: BrowserPreparedMint[] = [...terminalRows, ...current];
+    for (const [index, tx] of next.entries()) {
+      if (isTerminalBrowserMint(tx)) continue;
+      next[index] = await simulatePreparedBrowserMint(tx);
+      setTransactions([...next]);
     }
     setTransactions(next);
     setBusy(null);
@@ -191,22 +245,44 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages }
     else setNotice("All transactions simulated successfully. Review the explicit broadcast modal before signing.");
   }
 
+  function handleOpenBroadcast() {
+    if (!activeBinding || !canOpenBroadcast) return;
+    setBroadcastConsent(false);
+    setBroadcastConsentBinding(activeBinding);
+    setBroadcastOpen(true);
+  }
+
+  function handleCloseBroadcast() {
+    setBroadcastOpen(false);
+    setBroadcastConsent(false);
+    setBroadcastConsentBinding(null);
+  }
+
   async function handleBroadcastConfirmed() {
     resetMessages();
+    if (!broadcastConsent || !broadcastConsentBinding || broadcastConsentBinding !== activeBinding) {
+      setError("Broadcast consent no longer matches the exact simulated plan. Review the modal again.");
+      return;
+    }
     setBusy("Signing and broadcasting from unlocked in-memory keys…");
-    const next: BrowserPreparedMint[] = [];
-    for (const tx of transactions) {
-      const sent = await broadcastPreparedBrowserMint(tx, { explicitConsent: broadcastConsent });
-      next.push(sent);
-      setTransactions([...next, ...transactions.slice(next.length)]);
+    const next = [...transactions];
+    for (const [index, tx] of next.entries()) {
+      if (isTerminalBrowserMint(tx)) continue;
+      const sent = await broadcastPreparedBrowserMint(tx, {
+        explicitConsent: broadcastConsent,
+        consentBinding: broadcastConsentBinding,
+      });
+      next[index] = sent;
+      setTransactions([...next]);
     }
     setTransactions(next);
     setBusy(null);
     setBroadcastOpen(false);
     setBroadcastConsent(false);
+    setBroadcastConsentBinding(null);
     const failures = next.filter((tx) => tx.status === "failed").length;
-    if (failures > 0) setError(`${failures} transaction(s) failed during broadcast. Check row errors before retrying.`);
-    else setNotice("Broadcast submitted. Track transaction status with the explorer links below.");
+    if (failures > 0) setError(`${failures} transaction(s) failed during broadcast. Check row errors before preparing a fresh reviewed plan.`);
+    else setNotice("Broadcast submitted once for each reviewed row. Track transaction status with the explorer links below.");
   }
 
   function handleDownloadReport() {
@@ -282,7 +358,7 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages }
             <button type="submit" disabled={!encryptedBackup || Boolean(busy)} className="h-11 rounded-2xl bg-amber-600 px-4 text-sm font-black text-white shadow-sm transition hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50">
               Unlock vault
             </button>
-            <button type="button" onClick={() => setVault(null)} disabled={!vault} className="h-11 rounded-2xl border border-amber-200 bg-white px-4 text-sm font-black text-amber-700 shadow-sm disabled:cursor-not-allowed disabled:opacity-50">
+            <button type="button" onClick={handleDropKeys} disabled={!vault} className="h-11 rounded-2xl border border-amber-200 bg-white px-4 text-sm font-black text-amber-700 shadow-sm disabled:cursor-not-allowed disabled:opacity-50">
               Drop keys from memory
             </button>
           </div>
@@ -349,6 +425,12 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages }
             </div>
           </div>
 
+          <label className="mt-4 grid gap-2 text-xs font-black uppercase tracking-[0.18em] text-slate-500">
+            Maximum mint spend ETH
+            <input aria-label="Maximum mint spend ETH" value={maxTotalEth} onChange={(event) => setMaxTotalEth(Number(event.target.value))} type="number" min="0" step="0.001" className={FIELD} />
+            <span className="normal-case tracking-normal text-slate-500">Hard cap for aggregate mint value across every reviewed burner transaction. Network gas is separate.</span>
+          </label>
+
           <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
             <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">Gas / retry plan</p>
             <div className="mt-3 grid gap-2 sm:grid-cols-5">
@@ -391,7 +473,7 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages }
             <button type="button" onClick={handleSimulate} disabled={!vault || !chain.ready || Boolean(busy)} className="h-12 rounded-2xl border border-violet-200 bg-white px-4 font-black text-violet-700 shadow-sm transition hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50">
               Dry-run simulate
             </button>
-            <button type="button" onClick={() => setBroadcastOpen(true)} disabled={!canOpenBroadcast || Boolean(busy)} className="h-12 rounded-2xl bg-slate-950 px-4 font-black text-white shadow-sm transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50">
+            <button type="button" onClick={handleOpenBroadcast} disabled={!canOpenBroadcast || Boolean(busy)} className="h-12 rounded-2xl bg-slate-950 px-4 font-black text-white shadow-sm transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50">
               Open broadcast modal
             </button>
             <button type="button" onClick={handleDownloadReport} disabled={!canExportBrowserReport || Boolean(busy)} className="h-12 rounded-2xl border border-emerald-200 bg-white px-4 font-black text-emerald-700 shadow-sm transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 sm:col-span-3">
@@ -409,16 +491,23 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages }
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.24em] text-red-600">Explicit broadcast</p>
-                <h3 id="broadcast-title" className="mt-2 text-2xl font-black text-slate-950">Sign and send {transactions.length} transaction(s)?</h3>
+                <h3 id="broadcast-title" className="mt-2 text-2xl font-black text-slate-950">Sign and send {activeTransactions.length} transaction(s)?</h3>
                 <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">This uses private keys currently decrypted in browser memory. The app does not send keys to a server, but this will broadcast real transactions to {chain.name}.</p>
               </div>
-              <button type="button" onClick={() => setBroadcastOpen(false)} className="rounded-full border border-slate-200 px-3 py-1 text-sm font-black text-slate-600">Close</button>
+              <button type="button" onClick={handleCloseBroadcast} className="rounded-full border border-slate-200 px-3 py-1 text-sm font-black text-slate-600">Close</button>
+            </div>
+            <div className="mt-4 grid gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs font-bold text-slate-700 sm:grid-cols-2">
+              <p><span className="block uppercase tracking-[0.14em] text-slate-400">Collection</span>{collection.name}<span className="block font-mono">{maskVaultAddress(collection.address)}</span></p>
+              <p><span className="block uppercase tracking-[0.14em] text-slate-400">Chain</span>{chain.name} · {chain.chainId}</p>
+              <p><span className="block uppercase tracking-[0.14em] text-slate-400">Maximum spend</span>{maxTotalEth} ETH mint cap · {formatEther(activeTotalValueWei)} ETH reviewed</p>
+              <p><span className="block uppercase tracking-[0.14em] text-slate-400">Verified recipient</span>{recipientMode === "holder" && holderSession ? maskVaultAddress(holderSession.address) : recipientMode === "custom" ? maskVaultAddress(customRecipientAddress) : "payer wallets"}</p>
+              <p className="sm:col-span-2"><span className="block uppercase tracking-[0.14em] text-slate-400">Burner payers</span>{activeTransactions.map((tx) => `${tx.walletAlias} (${maskVaultAddress(tx.walletAddress)})`).join(", ")}</p>
             </div>
             <label className="mt-5 flex gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-800">
               <input type="checkbox" checked={broadcastConsent} onChange={(event) => setBroadcastConsent(event.target.checked)} className="mt-1" />
               <span>I reviewed the dry-run results, chain, RPC URL, SeaDrop address, costs, and wallet count. Broadcast these transactions now.</span>
             </label>
-            <button type="button" onClick={handleBroadcastConfirmed} disabled={!broadcastConsent || Boolean(busy)} className="mt-4 h-12 w-full rounded-2xl bg-red-600 px-5 font-black text-white transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50">
+            <button type="button" onClick={handleBroadcastConfirmed} disabled={!broadcastConsent || broadcastConsentBinding !== activeBinding || Boolean(busy)} className="mt-4 h-12 w-full rounded-2xl bg-red-600 px-5 font-black text-white transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50">
               Broadcast signed transactions
             </button>
           </div>
@@ -440,7 +529,7 @@ function TransactionTable({ transactions }: { transactions: BrowserPreparedMint[
       </div>
       <div className="divide-y divide-amber-100">
         {transactions.map((tx) => (
-          <article key={tx.id} className="grid gap-2 px-4 py-3 text-sm font-semibold text-slate-600 md:grid-cols-[1fr_0.8fr_0.7fr_0.7fr_0.9fr] md:items-center">
+          <article key={`${tx.binding}:${tx.id}:${tx.hash ?? tx.status}`} className="grid gap-2 px-4 py-3 text-sm font-semibold text-slate-600 md:grid-cols-[1fr_0.8fr_0.7fr_0.7fr_0.9fr] md:items-center">
             <div>
               <p className="font-black text-slate-950">{tx.walletAlias}</p>
               <p className="font-mono text-xs text-slate-500">{maskVaultAddress(tx.walletAddress)}</p>

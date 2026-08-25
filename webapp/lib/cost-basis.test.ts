@@ -154,6 +154,7 @@ test("rounding follows kit convention", () => {
     stages: [tinyStage],
     walletCount: 1,
     vault: unlockedVault,
+    recipientMode: "payer",
   });
   const report = buildBrowserRunReport({
     collection: { address: COLLECTION, name: "Tiny" },

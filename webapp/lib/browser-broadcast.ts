@@ -1,4 +1,4 @@
-import { Interface, JsonRpcProvider, Wallet, parseEther } from "ethers";
+import { Interface, JsonRpcProvider, Wallet, formatEther, parseEther } from "ethers";
 
 export type BrowserBroadcastChainKey = "ethereum" | "base" | "robinhood";
 export type BrowserMintStatus = "prepared" | "simulated" | "broadcast" | "failed";
@@ -38,6 +38,8 @@ export interface BrowserMintPlanInput {
   recipientMode?: BrowserMintRecipientMode;
   holderRecipientAddress?: string | null;
   customRecipientAddress?: string | null;
+  maxTotalEth?: number;
+  maxTotalValueWei?: bigint;
 }
 
 export interface BrowserChainConfig {
@@ -60,6 +62,7 @@ export interface BrowserPreparedMintRequest {
 
 export interface BrowserPreparedMint {
   id: string;
+  binding: string;
   chain: BrowserChainConfig;
   rpcUrl: string;
   walletAlias: string;
@@ -75,11 +78,15 @@ export interface BrowserPreparedMint {
   hash?: string;
   explorerUrl?: string;
   error?: string;
+  broadcastAttempted?: boolean;
 }
 
 export interface BrowserMintPlan {
+  binding: string;
   chain: BrowserChainConfig;
   rpcUrl: string;
+  totalValueWei: bigint;
+  maxTotalWei?: bigint;
   transactions: BrowserPreparedMint[];
   warnings: string[];
 }
@@ -143,6 +150,7 @@ export interface BrowserMintCalldataReview {
 }
 
 export interface BrowserRpcProviderLike {
+  getNetwork(): Promise<{ chainId: bigint | number }>;
   call(request: BrowserPreparedMintRequest & { from: string }): Promise<string>;
   estimateGas(request: BrowserPreparedMintRequest & { from: string }): Promise<bigint>;
 }
@@ -153,7 +161,15 @@ export interface BrowserWalletLike {
 
 const OPENSEA_SEADROP_ADDRESS = "0x00005EA00Ac477B1030CE78506496e8C2dE24bf5";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
-const TX_PRIVATE_KEYS = new WeakMap<BrowserPreparedMint, string>();
+interface BrowserPreparedMintContext {
+  privateKey: string;
+  revoked: boolean;
+  binding: string;
+  target: string;
+  feeRecipient: string;
+  value: bigint;
+}
+const TX_CONTEXT = new WeakMap<BrowserPreparedMint, BrowserPreparedMintContext>();
 const IFACE = new Interface([
   "function mintPublic(address nftContract, address feeRecipient, address minterIfNotPayer, uint256 quantity) payable",
 ]);
@@ -246,6 +262,42 @@ export function buildBrowserMintPlan(input: BrowserMintPlanInput): BrowserMintPl
   const wallets = input.vault.wallets.slice(0, Math.max(1, Math.floor(input.walletCount)));
   const transactions: BrowserPreparedMint[] = [];
   const recipientPlan = resolveRecipientPlan(input);
+  const totalValueWei = executableStages.reduce(
+    (sum, stage) => sum + parseEther(stage.priceEth || "0") * BigInt(stage.quantity) * BigInt(wallets.length),
+    BigInt(0),
+  );
+  if (input.maxTotalEth !== undefined && input.maxTotalValueWei !== undefined) {
+    throw new Error("Use either a decimal ETH cap or an exact wei cap, not both.");
+  }
+  let maxTotalWei = input.maxTotalValueWei;
+  if (maxTotalWei !== undefined && (typeof maxTotalWei !== "bigint" || maxTotalWei < BigInt(0))) {
+    throw new Error("Aggregate mint value cap must be a non-negative bigint wei amount.");
+  }
+  if (input.maxTotalEth !== undefined) {
+    if (!Number.isFinite(input.maxTotalEth) || input.maxTotalEth < 0) throw new Error("Aggregate mint value cap must be a non-negative finite ETH amount.");
+    maxTotalWei = parseEther(String(input.maxTotalEth));
+  }
+  if (maxTotalWei !== undefined && totalValueWei > maxTotalWei) {
+    throw new Error(`Aggregate mint value ${formatEther(totalValueWei)} ETH exceeds the configured ${formatEther(maxTotalWei)} ETH cap (network gas excluded).`);
+  }
+  const binding = JSON.stringify({
+    chainKey: chain.key,
+    chainId: chain.chainId,
+    rpcUrl: chain.rpcUrl,
+    seaDropAddress: chain.seaDropAddress.toLowerCase(),
+    collectionAddress: input.collectionAddress.toLowerCase(),
+    recipientMode: recipientPlan.mode,
+    recipientAddress: recipientPlan.address.toLowerCase(),
+    walletCount: wallets.length,
+    walletAddresses: wallets.map((wallet) => wallet.address.toLowerCase()),
+    maxTotalWei: maxTotalWei?.toString() ?? null,
+    stages: executableStages.map((stage) => ({
+      id: stage.id,
+      quantity: stage.quantity,
+      priceEth: stage.priceEth,
+      feeRecipient: stage.feeRecipient!.toLowerCase(),
+    })),
+  });
 
   for (const [walletIndex, wallet] of wallets.entries()) {
     for (const stage of executableStages) {
@@ -257,6 +309,7 @@ export function buildBrowserMintPlan(input: BrowserMintPlanInput): BrowserMintPl
       };
       const prepared: BrowserPreparedMint = makeSerializablePreparedMint({
         id: `${wallet.alias || `wallet-${walletIndex + 1}`}-${stage.id}-${walletIndex}`,
+        binding,
         chain,
         rpcUrl: chain.rpcUrl,
         walletAlias: wallet.alias || `wallet-${walletIndex + 1}`,
@@ -269,21 +322,38 @@ export function buildBrowserMintPlan(input: BrowserMintPlanInput): BrowserMintPl
         request,
         status: "prepared",
       });
-      TX_PRIVATE_KEYS.set(prepared, wallet.privateKey);
+      TX_CONTEXT.set(prepared, {
+        privateKey: wallet.privateKey,
+        revoked: false,
+        binding,
+        target: chain.seaDropAddress,
+        feeRecipient: stage.feeRecipient!,
+        value: request.value,
+      });
       transactions.push(prepared);
     }
   }
 
-  return {
+  const plan: BrowserMintPlan = {
+    binding,
     chain,
     rpcUrl: chain.rpcUrl,
+    totalValueWei,
+    maxTotalWei,
     transactions,
     warnings: chain.warnings,
   };
+  return Object.defineProperty(plan, "toJSON", {
+    enumerable: false,
+    value() {
+      return { ...plan, totalValueWei: totalValueWei.toString(), maxTotalWei: maxTotalWei?.toString() };
+    },
+  });
 }
 
 function resolveRecipientPlan(input: BrowserMintPlanInput): { mode: BrowserMintRecipientMode; address: string } {
-  const mode = input.recipientMode ?? "payer";
+  const mode = input.recipientMode;
+  if (!mode) throw new Error("An explicit recipient mode is required before preparing browser mint transactions.");
   if (mode === "payer") return { mode, address: ZERO_ADDRESS };
   const address = mode === "holder" ? clean(input.holderRecipientAddress) : clean(input.customRecipientAddress);
   if (!address || !/^0x[a-fA-F0-9]{40}$/.test(address)) {
@@ -294,6 +364,8 @@ function resolveRecipientPlan(input: BrowserMintPlanInput): { mode: BrowserMintR
 
 export function reviewPreparedBrowserMintCalldata(tx: BrowserPreparedMint, expected?: { collectionAddress?: string; holderRecipientAddress?: string | null; maxQuantity?: number }): BrowserMintCalldataReview {
   try {
+    const storedContext = TX_CONTEXT.get(tx);
+    const context = storedContext?.revoked ? undefined : storedContext;
     const decoded = IFACE.decodeFunctionData("mintPublic", tx.request.data);
     const nftContract = String(decoded[0]);
     const feeRecipient = String(decoded[1]);
@@ -302,10 +374,14 @@ export function reviewPreparedBrowserMintCalldata(tx: BrowserPreparedMint, expec
     const recipientTarget = tx.recipientMode === "payer" ? ZERO_ADDRESS : tx.recipientAddress;
     const checks: BrowserMintSafetyCheck[] = [
       { id: "function", label: "Function", ok: true, value: "mintPublic" },
+      { id: "plan-binding", label: "Plan binding matches", ok: Boolean(context && tx.binding === context.binding), value: tx.binding },
+      { id: "target", label: "SeaDrop target matches", ok: Boolean(context && tx.request.to.toLowerCase() === context.target.toLowerCase()), value: tx.request.to },
       { id: "collection", label: "Collection matches", ok: !expected?.collectionAddress || nftContract.toLowerCase() === expected.collectionAddress.toLowerCase(), value: nftContract },
+      { id: "fee-recipient", label: "Fee recipient matches", ok: Boolean(context && feeRecipient.toLowerCase() === context.feeRecipient.toLowerCase()), value: feeRecipient },
       { id: "recipient", label: "Recipient routing matches", ok: minterIfNotPayer.toLowerCase() === recipientTarget.toLowerCase(), value: minterIfNotPayer },
       { id: "holder", label: "Verified holder recipient", ok: tx.recipientMode !== "holder" || Boolean(expected?.holderRecipientAddress && tx.recipientAddress.toLowerCase() === expected.holderRecipientAddress.toLowerCase()), value: tx.recipientAddress },
       { id: "quantity", label: "Quantity within policy", ok: !expected?.maxQuantity || Number(quantity) <= expected.maxQuantity, value: quantity },
+      { id: "value", label: "Transaction value matches", ok: Boolean(context && tx.request.value === context.value), value: tx.request.value.toString() },
       { id: "status", label: "Simulation passed", ok: tx.status === "simulated", value: tx.status },
     ];
     return { functionName: "mintPublic", nftContract, feeRecipient, minterIfNotPayer, quantity, checks, readyForBroadcast: checks.every((check) => check.ok) };
@@ -316,8 +392,13 @@ export function reviewPreparedBrowserMintCalldata(tx: BrowserPreparedMint, expec
 }
 
 export async function simulatePreparedBrowserMint(tx: BrowserPreparedMint, provider?: BrowserRpcProviderLike): Promise<BrowserPreparedMint> {
+  if (isTerminalBrowserMint(tx)) return tx;
   const rpc = provider ?? (new JsonRpcProvider(tx.rpcUrl) as unknown as BrowserRpcProviderLike);
   try {
+    const network = await rpc.getNetwork();
+    if (BigInt(network.chainId) !== BigInt(tx.chain.chainId)) {
+      throw new Error(`RPC chain ID ${network.chainId.toString()} does not match expected ${tx.chain.chainId}.`);
+    }
     await rpc.call({ ...tx.request, from: tx.walletAddress });
     const gas = await rpc.estimateGas({ ...tx.request, from: tx.walletAddress });
     return copyWithPrivateKey(tx, { status: "simulated", simulationGas: gas.toString(), error: undefined });
@@ -330,6 +411,7 @@ export async function broadcastPreparedBrowserMint(
   tx: BrowserPreparedMint,
   deps: {
     explicitConsent: boolean;
+    consentBinding?: string;
     makeWallet?: (privateKey: string, provider: unknown) => BrowserWalletLike;
     provider?: unknown;
   },
@@ -337,22 +419,55 @@ export async function broadcastPreparedBrowserMint(
   if (tx.status !== "simulated") throw new Error("Dry-run/simulate before broadcast.");
   if (!deps.explicitConsent) throw new Error("Explicit broadcast confirmation is required before signing and sending.");
 
-  const privateKey = TX_PRIVATE_KEYS.get(tx);
-  if (!privateKey) throw new Error("Unlocked private key is no longer available in memory. Re-unlock the vault.");
+  const context = TX_CONTEXT.get(tx);
+  if (!context || context.revoked) throw new Error("Unlocked private key is no longer available in memory. Re-unlock the vault.");
+  if (deps.consentBinding !== context.binding || tx.binding !== context.binding) {
+    throw new Error("Explicit confirmation does not match the current transaction plan. Review and confirm again.");
+  }
+  if (!reviewPreparedBrowserMintCalldata(tx).readyForBroadcast) {
+    throw new Error("Prepared transaction request no longer matches the simulated mint. Prepare and simulate again.");
+  }
 
   const provider = deps.provider ?? new JsonRpcProvider(tx.rpcUrl);
-  const wallet = deps.makeWallet ? deps.makeWallet(privateKey, provider) : (new Wallet(privateKey, provider as JsonRpcProvider) as unknown as BrowserWalletLike);
+  const network = await (provider as { getNetwork(): Promise<{ chainId: bigint | number }> }).getNetwork();
+  if (BigInt(network.chainId) !== BigInt(tx.chain.chainId)) {
+    throw new Error(`RPC chain ID ${network.chainId.toString()} does not match expected ${tx.chain.chainId}.`);
+  }
+  const wallet = deps.makeWallet ? deps.makeWallet(context.privateKey, provider) : (new Wallet(context.privateKey, provider as JsonRpcProvider) as unknown as BrowserWalletLike);
   try {
     const response = await wallet.sendTransaction(tx.request);
-    return copyWithPrivateKey(tx, {
+    const broadcasted = copyWithPrivateKey(tx, {
       status: "broadcast",
       hash: response.hash,
       explorerUrl: explorerTxUrl(tx.chain.key, response.hash),
       error: undefined,
+      broadcastAttempted: true,
     });
+    revokePreparedBrowserMintSigners([tx, broadcasted]);
+    return broadcasted;
   } catch (error) {
-    return copyWithPrivateKey(tx, { status: "failed", error: safeMessageOf(error) });
+    const failed = copyWithPrivateKey(tx, { status: "failed", error: safeMessageOf(error), broadcastAttempted: true });
+    revokePreparedBrowserMintSigners([tx, failed]);
+    return failed;
   }
+}
+
+export function revokePreparedBrowserMintSigners(transactions: readonly BrowserPreparedMint[]): void {
+  for (const transaction of transactions) {
+    const context = TX_CONTEXT.get(transaction);
+    if (context) context.revoked = true;
+    TX_CONTEXT.delete(transaction);
+  }
+}
+
+export function isTerminalBrowserMint(transaction: BrowserPreparedMint): boolean {
+  return transaction.status === "broadcast" || transaction.broadcastAttempted === true;
+}
+
+export function invalidateBrowserMintTransactions(transactions: readonly BrowserPreparedMint[]): BrowserPreparedMint[] {
+  const stale = transactions.filter((transaction) => !isTerminalBrowserMint(transaction));
+  revokePreparedBrowserMintSigners(stale);
+  return transactions.filter(isTerminalBrowserMint);
 }
 
 export function buildBrowserRunReport(input: {
@@ -423,8 +538,8 @@ export function explorerTxUrl(chainKey: string, hash: string): string {
 
 function copyWithPrivateKey(tx: BrowserPreparedMint, patch: Partial<BrowserPreparedMint>): BrowserPreparedMint {
   const next = makeSerializablePreparedMint({ ...tx, ...patch });
-  const privateKey = TX_PRIVATE_KEYS.get(tx);
-  if (privateKey) TX_PRIVATE_KEYS.set(next, privateKey);
+  const context = TX_CONTEXT.get(tx);
+  if (context) TX_CONTEXT.set(next, context);
   return next;
 }
 
@@ -451,7 +566,7 @@ function clean(value?: string | null): string | null {
 function safeMessageOf(error: unknown): string {
   return (error instanceof Error ? error.message : String(error))
     .replace(/https?:\/\/[^\s"'`)]+/g, "[redacted-url]")
-    .replace(/\b(?:0x)?[a-fA-F0-9]{64}\b/g, "[redacted-hex]");
+    .replace(/\b(?:0x)?[a-fA-F0-9]{64,}\b/g, "[redacted-hex]");
 }
 
 function clampNumber(value: number, min: number, max: number): number {

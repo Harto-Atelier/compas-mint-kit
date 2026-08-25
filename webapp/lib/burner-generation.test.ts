@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Wallet } from "ethers";
 import {
   createLaunchVaultPayload,
   decryptLaunchVaultBackup,
@@ -27,6 +28,10 @@ test("bulk burner generation creates unique browser-local wallets labeled Burner
   assert.ok(burners.every((burner) => /^0x[0-9a-fA-F]{64}$/.test(burner.privateKey)));
   assert.ok(burners.every((burner) => /^0x[0-9a-fA-F]{40}$/.test(burner.address)));
   assert.equal(new Set(burners.map((burner) => burner.address.toLowerCase())).size, burners.length);
+  assert.equal(new Set(burners.map((burner) => burner.privateKey.toLowerCase())).size, burners.length);
+  for (const burner of burners) {
+    assert.equal(new Wallet(burner.privateKey).address, burner.address);
+  }
 });
 
 test("generated burners merge into the unlocked launch vault and are immediately re-sealed", async () => {
