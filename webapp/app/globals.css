@@ -33,6 +33,153 @@ button {
 }
 
 ::selection {
-  background: #8b5cf6;
-  color: white;
+  background: #ff6a1a;
+  color: #070705;
+}
+
+.compas-console {
+  --compas-bg: #080805;
+  --compas-ink: #f2efe3;
+  --compas-muted: #a9a393;
+  --compas-card: rgba(12, 12, 8, 0.92);
+  --compas-soft: rgba(255, 255, 245, 0.06);
+  --compas-line: rgba(242, 239, 227, 0.24);
+  --compas-accent: #ff6a1a;
+  --compas-accent-ink: #0b0704;
+  --compas-shadow: rgba(255, 106, 26, 0.24);
+  --compas-hero: #0d0d09;
+  --compas-hero-ink: #f5f0df;
+  --compas-hero-muted: rgba(245, 240, 223, 0.68);
+  --compas-hero-line: rgba(245, 240, 223, 0.24);
+  --compas-hero-card: rgba(255, 255, 245, 0.07);
+  --compas-bg-art:
+    radial-gradient(circle at 13% 16%, rgba(255, 106, 26, 0.14), transparent 24%),
+    radial-gradient(circle at 86% 8%, rgba(158, 255, 90, 0.08), transparent 18%),
+    linear-gradient(180deg, #060604 0%, #10100b 58%, #2a1007 100%);
+  --compas-grain:
+    linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px);
+  --compas-radius: 0px;
+  font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.compas-console[data-skin="light"] {
+  --compas-bg: #f3efe3;
+  --compas-ink: #12110d;
+  --compas-muted: #6c6558;
+  --compas-card: rgba(252, 249, 238, 0.94);
+  --compas-soft: rgba(255, 106, 26, 0.08);
+  --compas-line: rgba(18, 17, 13, 0.22);
+  --compas-accent: #ff6a1a;
+  --compas-accent-ink: #130900;
+  --compas-shadow: rgba(18, 17, 13, 0.18);
+  --compas-hero: #f8f3e5;
+  --compas-hero-ink: #11100c;
+  --compas-hero-muted: rgba(17, 16, 12, 0.58);
+  --compas-hero-line: rgba(17, 16, 12, 0.18);
+  --compas-hero-card: rgba(17, 16, 12, 0.05);
+  --compas-bg-art:
+    radial-gradient(circle at 13% 16%, rgba(255, 106, 26, 0.16), transparent 24%),
+    radial-gradient(circle at 86% 8%, rgba(40, 160, 80, 0.10), transparent 18%),
+    linear-gradient(180deg, #f6f1e4 0%, #fffaf0 55%, #f0dfc5 100%);
+  --compas-grain: linear-gradient(rgba(18,17,13,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(18,17,13,0.025) 1px, transparent 1px);
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+.compas-console[data-skin="coded"] {
+  --compas-bg: #020403;
+  --compas-ink: #c9ffd1;
+  --compas-muted: #6fae79;
+  --compas-card: rgba(2, 8, 4, 0.96);
+  --compas-soft: rgba(84, 255, 120, 0.07);
+  --compas-line: rgba(117, 255, 143, 0.32);
+  --compas-accent: #75ff8f;
+  --compas-accent-ink: #041006;
+  --compas-shadow: rgba(117, 255, 143, 0.22);
+  --compas-hero: #020403;
+  --compas-hero-ink: #d8ffde;
+  --compas-hero-muted: rgba(216, 255, 222, 0.62);
+  --compas-hero-line: rgba(117, 255, 143, 0.34);
+  --compas-hero-card: rgba(117, 255, 143, 0.06);
+  --compas-bg-art:
+    radial-gradient(circle at 20% 14%, rgba(117, 255, 143, 0.14), transparent 24%),
+    linear-gradient(180deg, #020403 0%, #051107 100%);
+  --compas-grain:
+    repeating-linear-gradient(0deg, rgba(117,255,143,0.05) 0 1px, transparent 1px 4px),
+    linear-gradient(90deg, rgba(117,255,143,0.04) 1px, transparent 1px);
+  font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.exq-panel {
+  border: 1px solid var(--compas-line);
+  background: var(--compas-card);
+  border-radius: var(--compas-radius);
+  box-shadow: 10px 10px 0 var(--compas-shadow);
+  backdrop-filter: blur(18px);
+}
+
+.exq-brand-mark {
+  position: relative;
+  display: grid;
+  height: 48px;
+  width: 48px;
+  place-items: center;
+  border: 1px solid var(--compas-line);
+  background: var(--compas-accent);
+  color: var(--compas-accent-ink);
+  box-shadow: 6px 6px 0 var(--compas-shadow);
+}
+
+.exq-brand-mark span {
+  font-size: 24px;
+  font-weight: 950;
+  line-height: 1;
+  letter-spacing: -0.18em;
+}
+
+.exq-brand-mark i {
+  position: absolute;
+  right: 7px;
+  top: 7px;
+  height: 7px;
+  width: 7px;
+  background: currentColor;
+}
+
+.compas-console[data-skin="dark"] :is([class*="bg-white"], [class*="bg-violet-50"], [class*="bg-slate-50"], [class*="bg-neutral-50"]),
+.compas-console[data-skin="coded"] :is([class*="bg-white"], [class*="bg-violet-50"], [class*="bg-slate-50"], [class*="bg-neutral-50"]) {
+  background-color: var(--compas-card) !important;
+}
+
+.compas-console[data-skin="dark"] :is([class*="border-violet"], [class*="border-slate"], [class*="border-neutral"], [class*="border-white"]),
+.compas-console[data-skin="coded"] :is([class*="border-violet"], [class*="border-slate"], [class*="border-neutral"], [class*="border-white"]) {
+  border-color: var(--compas-line) !important;
+}
+
+.compas-console[data-skin="dark"] :is([class*="text-slate-950"], [class*="text-neutral-950"], [class*="text-violet-950"], [class*="text-slate-900"]),
+.compas-console[data-skin="coded"] :is([class*="text-slate-950"], [class*="text-neutral-950"], [class*="text-violet-950"], [class*="text-slate-900"]) {
+  color: var(--compas-ink) !important;
+}
+
+.compas-console[data-skin="dark"] :is([class*="text-slate-500"], [class*="text-slate-600"], [class*="text-neutral-600"], [class*="text-neutral-500"]),
+.compas-console[data-skin="coded"] :is([class*="text-slate-500"], [class*="text-slate-600"], [class*="text-neutral-600"], [class*="text-neutral-500"]) {
+  color: var(--compas-muted) !important;
+}
+
+.compas-console[data-skin="dark"] :is([class*="text-violet"], [class*="text-fuchsia"]),
+.compas-console[data-skin="coded"] :is([class*="text-violet"], [class*="text-fuchsia"]) {
+  color: var(--compas-accent) !important;
+}
+
+.compas-console[data-skin="dark"] :is(input, select, textarea),
+.compas-console[data-skin="coded"] :is(input, select, textarea) {
+  background: var(--compas-card) !important;
+  border-color: var(--compas-line) !important;
+  color: var(--compas-ink) !important;
+}
+
+.compas-console[data-skin="dark"] :is([class*="from-violet"], [class*="to-violet"], [class*="from-emerald"], [class*="to-lime"]),
+.compas-console[data-skin="coded"] :is([class*="from-violet"], [class*="to-violet"], [class*="from-emerald"], [class*="to-lime"]) {
+  background-image: none !important;
+  background-color: var(--compas-soft) !important;
 }
