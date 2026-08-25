@@ -24,8 +24,8 @@ const DOCS_URL = "https://github.com/Harto-Atelier/compas-mint-kit#readme";
 const tabCopy: Record<MainTab, { eyebrow: string; title: string; body: string }> = {
   Guide: {
     eyebrow: "Holder guide",
-    title: "Move from verified holder to mint simulation, one decision at a time.",
-    body: "Canonical encrypted burners, exact funding rows, explicit connected-holder transfers, and holder-routed simulation.",
+    title: "Move from verified holder to confirmed mint receipts, one decision at a time.",
+    body: "Bound encrypted burners, exact funding, simulation, explicit live consent, verified recipients, and a balance-safe finish.",
   },
   Mints: {
     eyebrow: "Mint command",
@@ -93,13 +93,13 @@ function Sidebar({
   stagedWallets: number;
 }) {
   return (
-    <aside className="min-w-0 max-w-full lg:sticky lg:top-6 lg:h-[calc(100dvh-3rem)]">
+    <aside className="console-sidebar min-w-0 max-w-full lg:sticky lg:top-6 lg:h-[calc(100dvh-3rem)]">
       <div className="exq-panel flex h-full min-w-0 max-w-full flex-col overflow-hidden p-3 sm:p-4">
         <div className="flex items-center gap-3 border-b border-[color:var(--compas-line)] pb-3 sm:pb-5">
           <BrandMark />
           <div>
             <p className="text-sm font-black uppercase tracking-[0.18em] text-[color:var(--compas-ink)]">Compas Mint Kit</p>
-            <p className="text-xs font-bold uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">Harto operator shell</p>
+            <p className="text-xs font-bold uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">Holder mint journey</p>
           </div>
         </div>
 
@@ -148,13 +148,13 @@ function Sidebar({
               <p className="text-xs font-bold uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">in the planner store</p>
             </div>
           </div>
-          {stagedWallets === 0 ? (
+          {stagedWallets === 0 && active !== "Guide" ? (
             <button
               type="button"
-              onClick={() => setActive("Wallets")}
+              onClick={() => setActive("Guide")}
               className="mt-3 w-full rounded-full bg-white px-3 py-2 text-xs font-black text-violet-700 shadow-sm transition hover:bg-violet-100 dark:bg-white/10 dark:text-[color:var(--compas-hero-muted)]"
             >
-              Import wallets to start
+              Return to holder guide
             </button>
           ) : null}
         </div>
@@ -291,7 +291,13 @@ function MobileBottomNav({ active, setActive }: { active: MainTab; setActive: (t
   ];
 
   return (
-    <nav className="fixed inset-x-3 bottom-3 z-40 grid grid-cols-5 gap-1 rounded-none border border-[color:var(--compas-line)] bg-[color:var(--compas-card)] p-1 shadow-[8px_8px_0_var(--compas-shadow)] backdrop-blur-xl lg:hidden" aria-label="Mobile operator flow">
+    <nav
+      className={cx(
+        "fixed inset-x-3 bottom-3 z-40 grid-cols-5 gap-1 rounded-none border border-[color:var(--compas-line)] bg-[color:var(--compas-card)] p-1 shadow-[8px_8px_0_var(--compas-shadow)] backdrop-blur-xl lg:hidden",
+        active === "Guide" ? "hidden sm:grid" : "grid",
+      )}
+      aria-label="Mobile operator flow"
+    >
       {items.map((item) => (
         <button
           key={item.tab}
@@ -350,7 +356,11 @@ function SkinSwitcher({ skin, setSkin }: { skin: ConsoleSkin; setSkin: (skin: Co
 
 function MainPanel({ active, setActive }: { active: MainTab; setActive: (tab: MainTab) => void }) {
   if (active === "Guide") {
-    return <GuidedHolderFlow embedded onOpenAdvanced={setActive} />;
+    return (
+      <div className="guide-mobile-surface">
+        <GuidedHolderFlow embedded onOpenAdvanced={setActive} />
+      </div>
+    );
   }
 
   if (active === "Mints") {
@@ -402,8 +412,11 @@ export default function MintConsoleShell({ initialTab = "Guide" }: { initialTab?
 
   return (
     <CompasGate>
-    <main className="compas-console overflow-x-hidden" data-skin={skin}>
-      <div className="relative min-h-dvh bg-[var(--compas-bg-art)] px-3 pb-32 pt-3 text-[color:var(--compas-ink)] transition-colors duration-300 sm:px-6 sm:pb-24 sm:pt-5 lg:px-8">
+    <main className="compas-console overflow-x-hidden" data-skin={skin} data-active-tab={activeTab}>
+      <div className={cx(
+        "relative min-h-dvh bg-[var(--compas-bg-art)] px-3 pt-3 text-[color:var(--compas-ink)] transition-colors duration-300 sm:px-6 sm:pb-24 sm:pt-5 lg:px-8",
+        activeTab === "Guide" ? "pb-6" : "pb-32",
+      )}>
         <div className="pointer-events-none fixed inset-0 z-0 opacity-80 [background:var(--compas-grain)]" />
         <div className="relative z-10 mx-auto grid max-w-[1480px] min-w-0 gap-5 lg:grid-cols-[300px_minmax(0,1fr)]">
           <Sidebar active={activeTab} setActive={setActiveTab} stagedWallets={wallets.length} />

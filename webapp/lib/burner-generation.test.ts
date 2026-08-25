@@ -9,7 +9,12 @@ import {
   mergeVaultWallets,
   serializeEncryptedLaunchVaultBackup,
 } from "./encrypted-launch-vault";
-import { generateAndSealBurners, generateBurnerWallets, normalizeBurnerCount } from "./burner-generation";
+import {
+  DEFAULT_BURNER_CHAIN,
+  generateAndSealBurners,
+  generateBurnerWallets,
+  normalizeBurnerCount,
+} from "./burner-generation";
 
 test("burner count accepts only whole numbers from 1 through 50", () => {
   assert.equal(normalizeBurnerCount(1), 1);
@@ -32,6 +37,12 @@ test("bulk burner generation creates unique browser-local wallets labeled Burner
   for (const burner of burners) {
     assert.equal(new Wallet(burner.privateKey).address, burner.address);
   }
+});
+
+test("burner generation defaults to Base while still allowing Ethereum explicitly", () => {
+  assert.equal(DEFAULT_BURNER_CHAIN, "Base");
+  assert.ok(generateBurnerWallets({ count: 2 }).every((burner) => burner.chain === "Base"));
+  assert.ok(generateBurnerWallets({ count: 2, chain: "ETH" }).every((burner) => burner.chain === "ETH"));
 });
 
 test("generated burners merge into the unlocked launch vault and are immediately re-sealed", async () => {

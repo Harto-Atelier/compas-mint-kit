@@ -69,6 +69,11 @@ test("Vault renders bounded burner generation as the primary local key path", ()
   assert.doesNotMatch(markup, /Private keys \(one per line\)/);
 });
 
+test("Vault burner controls initialize from the shared Base default and retain Ethereum", () => {
+  assert.match(consoleSource, /useState<LaunchVaultChain>\(DEFAULT_BURNER_CHAIN\)/);
+  assert.match(consoleSource, /const CHAINS: LaunchVaultChain\[\] = \["Base", "ETH"\]/);
+});
+
 test("existing private-key import remains inside Advanced", () => {
   const markup = renderToStaticMarkup(
     ImportWalletPanel({

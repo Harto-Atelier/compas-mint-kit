@@ -11,6 +11,7 @@ import {
 
 export const MIN_BURNER_COUNT = 1;
 export const MAX_BURNER_COUNT = 50;
+export const DEFAULT_BURNER_CHAIN: LaunchVaultChain = "Base";
 
 export interface GenerateBurnerWalletsInput {
   count: number;
@@ -41,7 +42,7 @@ export function normalizeBurnerCount(count: number): number {
 
 export function generateBurnerWallets(input: GenerateBurnerWalletsInput): ParsedPrivateKeyImport[] {
   const count = normalizeBurnerCount(input.count);
-  const chain = input.chain ?? "ETH";
+  const chain = input.chain ?? DEFAULT_BURNER_CHAIN;
 
   return Array.from({ length: count }, (_, index) => {
     const wallet = Wallet.createRandom();

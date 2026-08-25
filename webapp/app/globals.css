@@ -191,3 +191,14 @@ button {
   background-image: none !important;
   background-color: var(--compas-soft) !important;
 }
+
+@media (max-width: 639px) {
+  .compas-console[data-active-tab="Guide"] .console-sidebar,
+  .compas-console[data-active-tab="Guide"] .guide-mobile-surface > section > div > header {
+    display: none;
+  }
+
+  .compas-console[data-active-tab="Guide"] .guide-mobile-surface > section > div {
+    gap: 0.75rem;
+  }
+}

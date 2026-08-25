@@ -24,6 +24,7 @@ import {
 import {
   MAX_BURNER_COUNT,
   MIN_BURNER_COUNT,
+  DEFAULT_BURNER_CHAIN,
   generateAndSealBurners,
 } from "@/lib/burner-generation";
 import {
@@ -41,7 +42,7 @@ const FIELD =
 const TEXTAREA =
   "rounded-2xl border border-violet-100 bg-white/90 px-4 py-3 text-sm font-bold text-slate-950 outline-none shadow-sm transition placeholder:text-slate-400 focus:border-violet-300 focus:ring-4 focus:ring-violet-100";
 const CARD = "rounded-[2rem] border border-violet-100 bg-white/90 p-5 shadow-sm backdrop-blur";
-const CHAINS: LaunchVaultChain[] = ["ETH", "Base"];
+const CHAINS: LaunchVaultChain[] = ["Base", "ETH"];
 
 export default function LaunchVaultConsole({ embedded = false }: { embedded?: boolean }) {
   const [encryptedBackup, setEncryptedBackup] = useState<EncryptedLaunchVaultBackup | null>(null);
@@ -67,7 +68,7 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
   const [replaceConfirmation, setReplaceConfirmation] = useState("");
 
   const [burnerCount, setBurnerCount] = useState("1");
-  const [burnerChain, setBurnerChain] = useState<LaunchVaultChain>("ETH");
+  const [burnerChain, setBurnerChain] = useState<LaunchVaultChain>(DEFAULT_BURNER_CHAIN);
   const [burnerPassphrase, setBurnerPassphrase] = useState("");
 
   const [walletLabel, setWalletLabel] = useState("Launch wallet");

@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 
 const source = readFileSync(new URL("../app/components/GuidedHolderFlow.tsx", import.meta.url), "utf8");
 const shellSource = readFileSync(new URL("../components/MintConsoleShell.tsx", import.meta.url), "utf8");
+const globalCssSource = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
 const appRouteSource = readFileSync(new URL("../app/app/page.tsx", import.meta.url), "utf8");
 
 test("guided holder UI wires canonical Vault projection, exact funding review, and explicit per-row holder sends", () => {
@@ -42,4 +43,15 @@ test("console opens on the minimal Guide and delegates dense operator tools to A
   assert.match(shellSource, /<GuidedHolderFlow embedded onOpenAdvanced=/);
   assert.match(shellSource, /Advanced tools/);
   assert.doesNotMatch(appRouteSource, /initialTab="Mints"/);
+});
+
+test("phone Guide removes shell chrome and hero so the active step stays above the fold", () => {
+  assert.match(shellSource, /data-active-tab=\{activeTab\}/);
+  assert.match(shellSource, /console-sidebar/);
+  assert.match(shellSource, /guide-mobile-surface/);
+  assert.match(shellSource, /active === "Guide" \? "hidden sm:grid" : "grid"/);
+  assert.match(globalCssSource, /@media \(max-width: 639px\)/);
+  assert.match(globalCssSource, /data-active-tab="Guide"[^\n]*\.console-sidebar/);
+  assert.match(globalCssSource, /data-active-tab="Guide"[^\n]*\.guide-mobile-surface[^\n]*header/);
+  assert.doesNotMatch(globalCssSource, /data-active-tab="Guide"[^\n]*nav\[aria-label="Guided holder flow"\]/);
 });
