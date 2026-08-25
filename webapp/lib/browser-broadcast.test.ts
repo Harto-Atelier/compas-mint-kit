@@ -1,4 +1,4 @@
-import { Interface } from "ethers";
+import { Interface, Wallet, keccak256 } from "ethers";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -12,8 +12,10 @@ import {
   isTerminalBrowserMint,
   markGuidedMintReceiptsForReconciliation,
   mergeGuidedMintReceipts,
+  prepareLowLatencyBrowserMint,
   revokePreparedBrowserMintSigners,
   reviewPreparedBrowserMintCalldata,
+  signPreparedBrowserMint,
   simulatePreparedBrowserMint,
   type BrowserMintStageInput,
   type UnlockedLaunchVault,
@@ -475,6 +477,111 @@ test("reviewed mint gas controls are bound into simulation and the exact wallet 
   const capturedRequest = sentRequest as typeof simulated.request;
   assert.equal(capturedRequest.gasLimit, BigInt(180_000));
   assert.equal(capturedRequest.maxFeePerGas, BigInt(2_000_000_000));
+});
+
+test("low-latency prepare prepopulates nonce, gas, and full EIP-1559 fees into a distinct binding", async () => {
+  const plan = buildBrowserMintPlan({
+    chainKey: "base",
+    collectionAddress: COLLECTION,
+    stages: [publicStage],
+    walletCount: 1,
+    vault: unlockedVault,
+    recipientMode: "payer",
+  });
+  const simulated = await simulatePreparedBrowserMint(plan.transactions[0], {
+    getNetwork: async () => ({ chainId: BigInt(8453) }),
+    call: async () => "0x",
+    estimateGas: async () => BigInt(170_000),
+  });
+
+  const lowLatency = prepareLowLatencyBrowserMint(simulated, {
+    nonce: 7,
+    gasLimit: BigInt(180_000),
+    maxFeePerGas: BigInt(2_000_000_000),
+    maxPriorityFeePerGas: BigInt(100_000_000),
+  });
+  const changedNonce = prepareLowLatencyBrowserMint(simulated, {
+    nonce: 8,
+    gasLimit: BigInt(180_000),
+    maxFeePerGas: BigInt(2_000_000_000),
+    maxPriorityFeePerGas: BigInt(100_000_000),
+  });
+  const changedPriority = prepareLowLatencyBrowserMint(simulated, {
+    nonce: 7,
+    gasLimit: BigInt(180_000),
+    maxFeePerGas: BigInt(2_000_000_000),
+    maxPriorityFeePerGas: BigInt(120_000_000),
+  });
+
+  assert.equal(lowLatency.binding, plan.binding, "standard plan binding remains stable");
+  assert.match(lowLatency.lowLatencyBinding ?? "", /^0x[0-9a-f]{64}$/i);
+  assert.notEqual(changedNonce.lowLatencyBinding, lowLatency.lowLatencyBinding);
+  assert.notEqual(changedPriority.lowLatencyBinding, lowLatency.lowLatencyBinding);
+  assert.equal(lowLatency.request.nonce, 7);
+  assert.equal(lowLatency.request.gasLimit, BigInt(180_000));
+  assert.equal(lowLatency.request.maxFeePerGas, BigInt(2_000_000_000));
+  assert.equal(lowLatency.request.maxPriorityFeePerGas, BigInt(100_000_000));
+});
+
+test("low-latency signing happens locally after exact consent and redacts the raw signed transaction from serialization", async () => {
+  const plan = buildBrowserMintPlan({
+    chainKey: "base",
+    collectionAddress: COLLECTION,
+    stages: [publicStage],
+    walletCount: 1,
+    vault: unlockedVault,
+    recipientMode: "payer",
+  });
+  const simulated = await simulatePreparedBrowserMint(plan.transactions[0], {
+    getNetwork: async () => ({ chainId: BigInt(8453) }),
+    call: async () => "0x",
+    estimateGas: async () => BigInt(170_000),
+  });
+  const lowLatency = prepareLowLatencyBrowserMint(simulated, {
+    nonce: 7,
+    gasLimit: BigInt(180_000),
+    maxFeePerGas: BigInt(2_000_000_000),
+    maxPriorityFeePerGas: BigInt(100_000_000),
+  });
+
+  await assert.rejects(
+    () => signPreparedBrowserMint(lowLatency, {
+      explicitConsent: false,
+      consentBinding: lowLatency.binding,
+      lowLatencyBinding: lowLatency.lowLatencyBinding,
+    }),
+    /explicit signing confirmation/i,
+  );
+
+  const signed = await signPreparedBrowserMint(lowLatency, {
+    explicitConsent: true,
+    consentBinding: lowLatency.binding,
+    lowLatencyBinding: lowLatency.lowLatencyBinding,
+    signedAt: "2026-08-25T00:00:00.000Z",
+  });
+  const raw = signed.rawSignedTransaction.revealForBroadcast({
+    explicitConsent: true,
+    lowLatencyBinding: signed.lowLatencyBinding,
+  });
+  const expectedRaw = await new Wallet(PRIVATE_KEY).signTransaction({
+    chainId: BigInt(8453),
+    type: 2,
+    to: lowLatency.request.to,
+    data: lowLatency.request.data,
+    value: lowLatency.request.value,
+    nonce: 7,
+    gasLimit: BigInt(180_000),
+    maxFeePerGas: BigInt(2_000_000_000),
+    maxPriorityFeePerGas: BigInt(100_000_000),
+  });
+
+  assert.equal(raw, expectedRaw);
+  assert.equal(signed.expectedHash, keccak256(raw));
+  assert.equal(signed.signedAt, "2026-08-25T00:00:00.000Z");
+  assert.equal(String(signed.rawSignedTransaction), "[redacted-raw-signed-transaction]");
+  assert.deepEqual(Object.keys(signed.rawSignedTransaction), []);
+  assert.equal(JSON.stringify(signed).includes(raw.slice(2)), false);
+  assert.equal(JSON.stringify(buildBrowserRunReport({ collection: { address: COLLECTION }, chain: plan.chain, transactions: [signed.transaction] })).includes(raw.slice(2)), false);
 });
 
 test("concurrent live broadcast attempts consume one signer authority before the first send", async () => {

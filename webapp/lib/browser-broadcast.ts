@@ -1,4 +1,4 @@
-import { Interface, JsonRpcProvider, Wallet, formatEther, id, parseEther } from "ethers";
+import { Interface, JsonRpcProvider, Wallet, formatEther, id, keccak256, parseEther } from "ethers";
 
 export type BrowserBroadcastChainKey = "ethereum" | "base" | "robinhood";
 export type BrowserMintStatus = "prepared" | "simulated" | "broadcast" | "failed";
@@ -60,13 +60,67 @@ export interface BrowserPreparedMintRequest {
   to: string;
   data: string;
   value: bigint;
+  nonce?: number;
   gasLimit?: bigint;
   maxFeePerGas?: bigint;
+  maxPriorityFeePerGas?: bigint;
+}
+
+export interface BrowserLowLatencyPrepareInput {
+  nonce: number;
+  gasLimit: bigint;
+  maxFeePerGas: bigint;
+  maxPriorityFeePerGas: bigint;
+}
+
+export interface BrowserSignedMint {
+  transaction: BrowserPreparedMint;
+  binding: string;
+  lowLatencyBinding: string;
+  expectedHash: string;
+  rawSignedTransaction: BrowserRawSignedTransaction;
+  signedAt: string;
+}
+
+export class BrowserRawSignedTransaction {
+  #raw: string;
+  #lowLatencyBinding: string;
+
+  constructor(raw: string, lowLatencyBinding: string) {
+    if (!/^0x[0-9a-fA-F]+$/.test(raw)) throw new Error("Raw signed transaction must be hex.");
+    this.#raw = raw;
+    this.#lowLatencyBinding = lowLatencyBinding;
+  }
+
+  revealForBroadcast(input: { explicitConsent: boolean; lowLatencyBinding?: string }): string {
+    if (!input.explicitConsent) throw new Error("Explicit raw transaction broadcast consent is required.");
+    if (input.lowLatencyBinding !== this.#lowLatencyBinding) {
+      throw new Error("Raw signed transaction binding does not match the current low-latency transaction.");
+    }
+    return this.#raw;
+  }
+
+  toJSON(): string {
+    return "[redacted-raw-signed-transaction]";
+  }
+
+  toString(): string {
+    return "[redacted-raw-signed-transaction]";
+  }
+
+  valueOf(): string {
+    return this.toString();
+  }
+
+  [Symbol.for("nodejs.util.inspect.custom")](): string {
+    return this.toString();
+  }
 }
 
 export interface BrowserPreparedMint {
   id: string;
   binding: string;
+  lowLatencyBinding?: string;
   chain: BrowserChainConfig;
   rpcUrl: string;
   walletAlias: string;
@@ -210,8 +264,10 @@ interface BrowserPreparedMintContext {
   target: string;
   feeRecipient: string;
   value: bigint;
+  nonce?: number;
   gasLimit?: bigint;
   maxFeePerGas?: bigint;
+  maxPriorityFeePerGas?: bigint;
   broadcasting?: boolean;
 }
 const TX_CONTEXT = new WeakMap<BrowserPreparedMint, BrowserPreparedMintContext>();
@@ -444,8 +500,10 @@ export function reviewPreparedBrowserMintCalldata(tx: BrowserPreparedMint, expec
       { id: "holder", label: "Verified holder recipient", ok: tx.recipientMode !== "holder" || Boolean(expected?.holderRecipientAddress && tx.recipientAddress.toLowerCase() === expected.holderRecipientAddress.toLowerCase()), value: tx.recipientAddress },
       { id: "quantity", label: "Quantity within policy", ok: !expected?.maxQuantity || Number(quantity) <= expected.maxQuantity, value: quantity },
       { id: "value", label: "Transaction value matches", ok: Boolean(context && tx.request.value === context.value), value: tx.request.value.toString() },
+      { id: "nonce", label: "Nonce matches", ok: Boolean(context && tx.request.nonce === context.nonce), value: tx.request.nonce?.toString() ?? "provider-managed" },
       { id: "gas-limit", label: "Gas limit matches", ok: Boolean(context && tx.request.gasLimit === context.gasLimit), value: tx.request.gasLimit?.toString() ?? "provider-estimated" },
       { id: "max-fee", label: "Maximum fee per gas matches", ok: Boolean(context && tx.request.maxFeePerGas === context.maxFeePerGas), value: tx.request.maxFeePerGas?.toString() ?? "provider-estimated" },
+      { id: "priority-fee", label: "Priority fee per gas matches", ok: Boolean(context && tx.request.maxPriorityFeePerGas === context.maxPriorityFeePerGas), value: tx.request.maxPriorityFeePerGas?.toString() ?? "provider-estimated" },
       { id: "status", label: "Simulation passed", ok: tx.status === "simulated", value: tx.status },
     ];
     return { functionName: "mintPublic", nftContract, feeRecipient, minterIfNotPayer, quantity, checks, readyForBroadcast: checks.every((check) => check.ok) };
@@ -469,6 +527,112 @@ export async function simulatePreparedBrowserMint(tx: BrowserPreparedMint, provi
   } catch (error) {
     return copyWithPrivateKey(tx, { status: "failed", error: safeMessageOf(error) });
   }
+}
+
+export function prepareLowLatencyBrowserMint(tx: BrowserPreparedMint, input: BrowserLowLatencyPrepareInput): BrowserPreparedMint {
+  if (isTerminalBrowserMint(tx)) throw new Error("Terminal browser mint rows cannot be prepared for low-latency signing.");
+  validateLowLatencyPrepareInput(input);
+  const lowLatencyBinding = id(JSON.stringify({
+    planBinding: tx.binding,
+    transactionId: tx.id,
+    chainId: tx.chain.chainId,
+    walletAddress: tx.walletAddress.toLowerCase(),
+    to: tx.request.to.toLowerCase(),
+    data: tx.request.data,
+    value: tx.request.value.toString(),
+    nonce: input.nonce,
+    gasLimit: input.gasLimit.toString(),
+    maxFeePerGas: input.maxFeePerGas.toString(),
+    maxPriorityFeePerGas: input.maxPriorityFeePerGas.toString(),
+  }));
+  const next = makeSerializablePreparedMint({
+    ...tx,
+    lowLatencyBinding,
+    request: {
+      ...tx.request,
+      nonce: input.nonce,
+      gasLimit: input.gasLimit,
+      maxFeePerGas: input.maxFeePerGas,
+      maxPriorityFeePerGas: input.maxPriorityFeePerGas,
+    },
+  });
+  const context = TX_CONTEXT.get(tx);
+  if (context) {
+    TX_CONTEXT.set(next, {
+      ...context,
+      nonce: input.nonce,
+      gasLimit: input.gasLimit,
+      maxFeePerGas: input.maxFeePerGas,
+      maxPriorityFeePerGas: input.maxPriorityFeePerGas,
+      broadcasting: false,
+    });
+  }
+  return next;
+}
+
+export async function signPreparedBrowserMint(
+  tx: BrowserPreparedMint,
+  deps: {
+    explicitConsent: boolean;
+    consentBinding?: string;
+    lowLatencyBinding?: string;
+    signedAt?: string;
+  },
+): Promise<BrowserSignedMint> {
+  if (tx.status !== "simulated") throw new Error("Dry-run/simulate before low-latency signing.");
+  if (!deps.explicitConsent) throw new Error("Explicit signing confirmation is required before creating a raw signed transaction.");
+  const context = TX_CONTEXT.get(tx);
+  if (!context || context.revoked) throw new Error("Unlocked private key is no longer available in memory. Re-unlock the vault.");
+  if (deps.consentBinding !== context.binding || tx.binding !== context.binding) {
+    throw new Error("Explicit signing confirmation does not match the current transaction plan. Review and confirm again.");
+  }
+  if (!tx.lowLatencyBinding || deps.lowLatencyBinding !== tx.lowLatencyBinding) {
+    throw new Error("Explicit signing confirmation does not match the prepared low-latency transaction. Review nonce and fee fields again.");
+  }
+  if (!hasFullLowLatencyRequest(tx.request)) {
+    throw new Error("Low-latency signing requires a prepared nonce, gas limit, max fee, and priority fee.");
+  }
+  if (!reviewPreparedBrowserMintCalldata(tx, {
+    holderRecipientAddress: tx.recipientMode === "holder" ? tx.recipientAddress : undefined,
+  }).readyForBroadcast) {
+    throw new Error("Prepared low-latency transaction request no longer matches the simulated mint. Prepare and simulate again.");
+  }
+
+  const privateKey = context.privateKey;
+  context.revoked = true;
+  TX_CONTEXT.delete(tx);
+  const raw = await new Wallet(privateKey).signTransaction({
+    chainId: BigInt(tx.chain.chainId),
+    type: 2,
+    to: tx.request.to,
+    data: tx.request.data,
+    value: tx.request.value,
+    nonce: tx.request.nonce,
+    gasLimit: tx.request.gasLimit,
+    maxFeePerGas: tx.request.maxFeePerGas,
+    maxPriorityFeePerGas: tx.request.maxPriorityFeePerGas,
+  });
+  const signed = {
+    transaction: makeSerializablePreparedMint({ ...tx }),
+    binding: tx.binding,
+    lowLatencyBinding: tx.lowLatencyBinding,
+    expectedHash: keccak256(raw),
+    rawSignedTransaction: new BrowserRawSignedTransaction(raw, tx.lowLatencyBinding),
+    signedAt: deps.signedAt ?? new Date().toISOString(),
+  } satisfies BrowserSignedMint;
+  return Object.defineProperty(signed, "toJSON", {
+    enumerable: false,
+    value() {
+      return {
+        transaction: signed.transaction,
+        binding: signed.binding,
+        lowLatencyBinding: signed.lowLatencyBinding,
+        expectedHash: signed.expectedHash,
+        rawSignedTransaction: "[redacted-raw-signed-transaction]",
+        signedAt: signed.signedAt,
+      };
+    },
+  });
 }
 
 export async function broadcastPreparedBrowserMint(
@@ -809,12 +973,32 @@ function makeSerializablePreparedMint(tx: BrowserPreparedMint): BrowserPreparedM
         request: {
           ...tx.request,
           value: tx.request.value.toString(),
+          nonce: tx.request.nonce,
           gasLimit: tx.request.gasLimit?.toString(),
           maxFeePerGas: tx.request.maxFeePerGas?.toString(),
+          maxPriorityFeePerGas: tx.request.maxPriorityFeePerGas?.toString(),
         },
       };
     },
   });
+}
+
+function validateLowLatencyPrepareInput(input: BrowserLowLatencyPrepareInput): void {
+  if (!Number.isSafeInteger(input.nonce) || input.nonce < 0) throw new Error("Low-latency nonce must be a non-negative safe integer.");
+  if (typeof input.gasLimit !== "bigint" || input.gasLimit <= BigInt(0)) throw new Error("Low-latency gas limit must be a positive bigint.");
+  if (typeof input.maxFeePerGas !== "bigint" || input.maxFeePerGas <= BigInt(0)) throw new Error("Low-latency max fee per gas must be a positive bigint.");
+  if (typeof input.maxPriorityFeePerGas !== "bigint" || input.maxPriorityFeePerGas <= BigInt(0)) throw new Error("Low-latency priority fee per gas must be a positive bigint.");
+  if (input.maxPriorityFeePerGas > input.maxFeePerGas) throw new Error("Low-latency priority fee cannot exceed the max fee per gas.");
+}
+
+function hasFullLowLatencyRequest(request: BrowserPreparedMintRequest): request is BrowserPreparedMintRequest & Required<Pick<BrowserPreparedMintRequest, "nonce" | "gasLimit" | "maxFeePerGas" | "maxPriorityFeePerGas">> {
+  return (
+    typeof request.nonce === "number" && Number.isSafeInteger(request.nonce) && request.nonce >= 0 &&
+    typeof request.gasLimit === "bigint" && request.gasLimit > BigInt(0) &&
+    typeof request.maxFeePerGas === "bigint" && request.maxFeePerGas > BigInt(0) &&
+    typeof request.maxPriorityFeePerGas === "bigint" && request.maxPriorityFeePerGas > BigInt(0) &&
+    request.maxPriorityFeePerGas <= request.maxFeePerGas
+  );
 }
 
 function clean(value?: string | null): string | null {
