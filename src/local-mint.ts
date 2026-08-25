@@ -9,7 +9,8 @@
 import chalk from "chalk";
 import { performance } from "perf_hooks";
 import { JsonRpcProvider, Wallet, formatEther } from "ethers";
-import { blastToAll, parseRpcEndpoints, prepareBlast, waitForReceipt, PreparedBlast } from "./rpc-blast";
+import { parseRpcEndpoints, prepareBlast, waitForReceipt, type PreparedBlast } from "./rpc-blast";
+import { relaySameHashToRpcs, type FastRelayRaceResult } from "./fast-relay";
 import { warmConnections } from "./connection-warmer";
 import { waitForMintTime } from "./timer";
 import { explorerTx } from "./chains";
@@ -93,10 +94,12 @@ export async function localPublicSnipe(opts: LocalSnipeOpts): Promise<void> {
   const stageStartMs = targetStart ? targetStart.getTime() : Date.now();
   const dispatchStart = performance.now();
 
-  const fired = prepared.map(({ idx, address, blast }) => {
-    const { txHash, responsePromise } = blastToAll(blast, endpoints);
-    return { idx, address, txHash, responsePromise };
-  });
+  const fired = prepared.map(({ idx, address, blast }) => ({
+    idx,
+    address,
+    txHash: blast.txHash,
+    racePromise: relaySameHashToRpcs(blast, endpoints),
+  }));
 
   const dispatchMs = (performance.now() - dispatchStart).toFixed(2);
   const sinceStage = Math.max(0, Date.now() - stageStartMs);
@@ -107,28 +110,36 @@ export async function localPublicSnipe(opts: LocalSnipeOpts): Promise<void> {
     console.log(chalk.gray(`    [W${f.idx}] ${f.txHash}`));
   }
 
-  // Dispatch only means "bytes written". Find out whether any endpoint actually
-  // took the transaction before promising a receipt that may never exist.
+  // Dispatch only means "bytes written". Aggregate every RPC response using
+  // same-hash race semantics before promising a receipt that may never exist.
   const settled = await Promise.all(
-    fired.map(async (f) => ({ ...f, results: await f.responsePromise }))
+    fired.map(async (f) => ({ ...f, race: await f.racePromise }))
   );
 
-  const accepted = settled.filter(({ results }) =>
-    results.some((r) => r.txHash !== null || (r.error ?? "").includes("already known"))
-  );
-  const rejected = settled.filter((s) => !accepted.includes(s));
+  for (const { idx, race } of settled) printFastRelayRace(idx, race);
 
-  for (const { idx, results } of rejected) {
-    const reasons = [...new Set(results.map((r) => r.error).filter(Boolean))];
-    console.log(chalk.bold.red(`\n  ✗ [W${idx}] REJECTED by every RPC — never broadcast.`));
+  const accepted = settled.filter(({ race }) => race.state === "ACCEPTED");
+  const ambiguous = settled.filter(({ race }) => race.state === "AMBIGUOUS");
+  const rejected = settled.filter(({ race }) => race.state === "REJECTED");
+
+  for (const { idx, race } of rejected) {
+    const reasons = [...new Set(race.rejectedBy.map((r) => r.error).filter((r): r is string => Boolean(r)))];
+    console.log(chalk.bold.red(`\n  ✗ [W${idx}] REJECTED by every RPC — never accepted.`));
     for (const reason of reasons) console.log(chalk.red(`      ${reason}`));
-    if (reasons.some((r) => (r ?? "").includes("less than block base fee"))) {
+    if (reasons.some((r) => r.includes("less than block base fee"))) {
       console.log(chalk.yellow("      → Your max fee is under the chain's base fee. Raise it and re-run."));
     }
   }
 
+  for (const { idx, txHash, race } of ambiguous) {
+    const reasons = [...new Set(race.ambiguousRoutes.map((r) => r.error ?? r.outcome))];
+    console.log(chalk.bold.yellow(`\n  ? [W${idx}] AMBIGUOUS — no RPC accepted ${txHash}, but at least one route timed out/rate-limited/misreported.`));
+    for (const reason of reasons) console.log(chalk.yellow(`      ${reason}`));
+    console.log(chalk.yellow("      → Do not replace, bump gas, or re-sign until you verify the hash externally."));
+  }
+
   if (accepted.length === 0) {
-    console.log(chalk.bold.red("\n===== NOTHING WAS BROADCAST — no receipts to wait for =====\n"));
+    console.log(chalk.bold.yellow("\n===== NO DEFINITE ACCEPTANCE — no receipts to wait for yet =====\n"));
     return;
   }
 
@@ -150,4 +161,13 @@ export async function localPublicSnipe(opts: LocalSnipeOpts): Promise<void> {
   );
 
   console.log(chalk.bold.white("\n===== LOCAL PUBLIC MINT COMPLETE ====="));
+}
+
+function printFastRelayRace(walletIndex: number, race: FastRelayRaceResult): void {
+  const color = race.state === "ACCEPTED" ? chalk.green : race.state === "REJECTED" ? chalk.red : chalk.yellow;
+  console.log(color(`\n  [W${walletIndex}] Fast relay ${race.state}: ${race.expectedTxHash}`));
+  for (const route of race.routes) {
+    const detail = route.txHash ?? route.error ?? route.outcome;
+    console.log(color(`    ${route.label}: ${route.outcome}${detail ? ` — ${detail}` : ""}`));
+  }
 }
