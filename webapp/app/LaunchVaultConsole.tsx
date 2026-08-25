@@ -21,6 +21,11 @@ import {
   type LaunchVaultChain,
   type LaunchVaultPayload,
 } from "@/lib/encrypted-launch-vault";
+import {
+  MAX_BURNER_COUNT,
+  MIN_BURNER_COUNT,
+  generateAndSealBurners,
+} from "@/lib/burner-generation";
 
 const FIELD =
   "h-12 rounded-2xl border border-violet-100 bg-white/90 px-4 text-sm font-bold text-slate-950 outline-none shadow-sm transition placeholder:text-slate-400 focus:border-violet-300 focus:ring-4 focus:ring-violet-100";
@@ -43,6 +48,10 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
   const [createConfirm, setCreateConfirm] = useState("");
 
   const [unlockPassphrase, setUnlockPassphrase] = useState("");
+
+  const [burnerCount, setBurnerCount] = useState("1");
+  const [burnerChain, setBurnerChain] = useState<LaunchVaultChain>("ETH");
+  const [burnerPassphrase, setBurnerPassphrase] = useState("");
 
   const [walletLabel, setWalletLabel] = useState("Launch wallet");
   const [walletChain, setWalletChain] = useState<LaunchVaultChain>("ETH");
@@ -127,6 +136,37 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
     }
   }
 
+  async function handleGenerateBurners(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    resetMessages();
+
+    if (!vault || !encryptedBackup) {
+      setError("Unlock the vault before generating burner wallets.");
+      return;
+    }
+
+    setBusy("Generating browser-local burners and sealing vault…");
+    try {
+      const result = await generateAndSealBurners({
+        encryptedBackup,
+        passphrase: burnerPassphrase,
+        count: Number(burnerCount),
+        chain: burnerChain,
+      });
+      persistBackup(result.encryptedBackup);
+      setVault(result.payload);
+      setNotice(
+        `${result.added} burner wallet${result.added === 1 ? "" : "s"} generated locally and sealed into a fresh AES-GCM backup. Export the updated encrypted backup before funding.`,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not generate and seal burner wallets. The encrypted vault was not changed.");
+    } finally {
+      setBurnerCount("1");
+      setBurnerPassphrase("");
+      setBusy(null);
+    }
+  }
+
   async function handleAddWallets(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     resetMessages();
@@ -197,6 +237,8 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
 
   function handleLock() {
     setVault(null);
+    setBurnerCount("1");
+    setBurnerPassphrase("");
     setPrivateKeyInput("");
     setSealPassphrase("");
     setUnlockPassphrase("");
@@ -224,6 +266,8 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
     window.localStorage.removeItem(LAUNCH_VAULT_STORAGE_KEY);
     setEncryptedBackup(null);
     setVault(null);
+    setBurnerCount("1");
+    setBurnerPassphrase("");
     setPrivateKeyInput("");
     setSealPassphrase("");
     setUnlockPassphrase("");
@@ -288,6 +332,15 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
           <div className="grid gap-6">
             {vault ? (
               <>
+                <BurnerGenerationPanel
+                  count={burnerCount}
+                  chain={burnerChain}
+                  sealPassphrase={burnerPassphrase}
+                  onCount={setBurnerCount}
+                  onChain={setBurnerChain}
+                  onSealPassphrase={setBurnerPassphrase}
+                  onSubmit={handleGenerateBurners}
+                />
                 <ImportWalletPanel
                   bulkMode={bulkMode}
                   chain={walletChain}
@@ -333,7 +386,7 @@ function VaultHero({
             Per-launch key management without server custody.
           </h1>
           <p className="mt-4 max-w-3xl text-sm font-semibold leading-6 text-slate-500 sm:text-base">
-            Create one browser-local vault per launch, unlock with a passphrase, seal imported private keys with Web Crypto AES-GCM, and show derived addresses only. No passphrase is stored, no keys leave React memory while unlocked, and no signing or broadcasting is wired here.
+            Create one browser-local vault per launch, generate or import burner wallets, seal private keys with Web Crypto AES-GCM, and show derived addresses only. No passphrase is stored, no keys leave React memory while unlocked, and no signing or broadcasting happens in this Vault panel.
           </p>
         </div>
         <div className="grid gap-2 rounded-3xl border border-violet-100 bg-violet-50/70 p-4 text-center text-sm font-black text-violet-800 sm:min-w-80 sm:grid-cols-3 lg:grid-cols-1">
@@ -487,7 +540,78 @@ function UnlockedVaultPanel({
   );
 }
 
-function ImportWalletPanel({
+export function BurnerGenerationPanel({
+  count,
+  chain,
+  sealPassphrase,
+  onCount,
+  onChain,
+  onSealPassphrase,
+  onSubmit,
+}: {
+  count: string;
+  chain: LaunchVaultChain;
+  sealPassphrase: string;
+  onCount: (value: string) => void;
+  onChain: (value: LaunchVaultChain) => void;
+  onSealPassphrase: (value: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <form onSubmit={onSubmit} className={CARD}>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.24em] text-violet-600">Generate encrypted burners</p>
+          <h2 className="mt-2 text-2xl font-black text-slate-950">Create launch wallets in one local batch.</h2>
+          <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">
+            Browser-local only: each wallet is created with secure randomness, merged into this launch vault, and immediately re-sealed with AES-GCM. Plaintext keys stay only in transient unlocked React memory; this action makes no API or network calls.
+          </p>
+        </div>
+        <span className="w-fit rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-black text-emerald-700">
+          1–50 wallets
+        </span>
+      </div>
+
+      <div className="mt-5 grid gap-3 sm:grid-cols-[1fr_10rem]">
+        <label className="grid gap-2 text-xs font-black uppercase tracking-[0.18em] text-slate-500">
+          Burner count
+          <input
+            value={count}
+            onChange={(event) => onCount(event.target.value)}
+            type="number"
+            inputMode="numeric"
+            min={MIN_BURNER_COUNT}
+            max={MAX_BURNER_COUNT}
+            step={1}
+            required
+            className={`${FIELD} normal-case tracking-normal`}
+          />
+        </label>
+        <label className="grid gap-2 text-xs font-black uppercase tracking-[0.18em] text-slate-500">
+          Chain
+          <select value={chain} onChange={(event) => onChain(event.target.value as LaunchVaultChain)} className={`${FIELD} normal-case tracking-normal`}>
+            {CHAINS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <label className="mt-4 grid gap-2 text-xs font-black uppercase tracking-[0.18em] text-slate-500">
+        Passphrase to verify + re-seal
+        <input value={sealPassphrase} onChange={(event) => onSealPassphrase(event.target.value)} minLength={12} type="password" autoComplete="current-password" required className={FIELD} />
+      </label>
+
+      <button type="submit" className="mt-5 h-12 w-full rounded-2xl bg-violet-600 px-5 font-black text-white transition hover:bg-violet-500">
+        Generate + encrypt burners
+      </button>
+    </form>
+  );
+}
+
+export function ImportWalletPanel({
   bulkMode,
   chain,
   label,
@@ -513,7 +637,12 @@ function ImportWalletPanel({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   return (
-    <form onSubmit={onSubmit} className={CARD}>
+    <details className={CARD}>
+      <summary className="cursor-pointer list-none text-sm font-black text-violet-700">
+        Advanced · import private keys
+        <span className="mt-1 block text-xs font-semibold leading-5 text-slate-500">Use only when you already control burner keys that must be added to this launch vault.</span>
+      </summary>
+      <form onSubmit={onSubmit} className="mt-5 border-t border-violet-100 pt-5">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-xs font-black uppercase tracking-[0.24em] text-violet-600">Add keys</p>
@@ -565,7 +694,8 @@ function ImportWalletPanel({
       <button type="submit" className="mt-5 h-12 w-full rounded-2xl bg-violet-600 px-5 font-black text-white transition hover:bg-violet-500">
         Derive addresses and seal keys
       </button>
-    </form>
+      </form>
+    </details>
   );
 }
 
@@ -585,7 +715,7 @@ function VaultWalletTable({ wallets, onRemove }: { wallets: ReturnType<typeof to
           <article key={wallet.id} className="grid gap-3 p-4 text-sm md:grid-cols-[1.1fr_1.4fr_0.5fr_0.5fr] md:items-center">
             <div>
               <p className="font-black text-slate-950">{wallet.label}</p>
-              <p className="mt-1 text-xs font-semibold text-slate-400">Imported {formatVaultTimestamp(wallet.createdAt)}</p>
+              <p className="mt-1 text-xs font-semibold text-slate-400">Added {formatVaultTimestamp(wallet.createdAt)}</p>
             </div>
             <p className="break-all font-mono text-xs font-bold text-slate-600" title={wallet.address}>{maskVaultAddress(wallet.address)}</p>
             <span className="w-fit rounded-full border border-violet-100 bg-violet-50 px-3 py-1 text-xs font-black text-violet-700">{wallet.chain}</span>
@@ -612,7 +742,7 @@ function LockedEducationPanel({ hasVault }: { hasVault: boolean }) {
           <li>• Stores one encrypted blob in localStorage only; no API route receives secrets.</li>
           <li>• Requires the passphrase to unlock and again to re-seal edits; the passphrase is never stored.</li>
           <li>• Renders derived public addresses only, never seed phrases or private key text.</li>
-          <li>• Does not sign, generate calldata, broadcast, disperse, or connect to wallet SDKs.</li>
+          <li>• Generates burners locally and never sends generated or imported keys to an API.</li>
         </ul>
       </div>
       <div className="rounded-[2rem] border border-amber-200 bg-amber-50 p-5 text-sm font-semibold leading-6 text-amber-800">
