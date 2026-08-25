@@ -155,6 +155,41 @@ test("payload validation rejects malformed launch metadata and wallet lists", ()
   }
 });
 
+test("payload validation accepts only canonical ASCII launch slugs up to 72 characters", () => {
+  const valid = payloadWith([]);
+  const invalidLaunchIds = [
+    "Launch-A",
+    "launch a",
+    "launch_a",
+    "launch--a",
+    "-launch-a",
+    "launch-a-",
+    `launch${String.fromCodePoint(0x0b)}a`,
+    `launch${String.fromCodePoint(0x00)}a`,
+    `launch${String.fromCodePoint(0x202e)}a`,
+    `l${String.fromCodePoint(0x0430)}unch-a`,
+    "a".repeat(73),
+  ];
+  for (const launchId of invalidLaunchIds) {
+    assert.throws(() => validateLaunchVaultPayload({ ...valid, launchId }), /canonical ASCII slug|launchId/i, launchId);
+  }
+  assert.doesNotThrow(() => validateLaunchVaultPayload({ ...valid, launchId: "launch-a-2026" }));
+});
+
+test("payload and wallet timestamps must be safe valid integers with ordered bounds and no unreasonable future dates", () => {
+  const valid = payloadWith([walletRecord(1)]);
+  const future = Date.now() + 24 * 60 * 60 * 1000;
+  const cases: Array<[unknown, RegExp]> = [
+    [{ ...valid, createdAt: 1.5 }, /createdAt.*safe integer/i],
+    [{ ...valid, updatedAt: Number.MAX_SAFE_INTEGER }, /updatedAt.*valid date|future/i],
+    [{ ...valid, createdAt: valid.updatedAt + 1 }, /createdAt.*updatedAt/i],
+    [{ ...valid, updatedAt: future }, /updatedAt.*future/i],
+    [{ ...valid, wallets: [{ ...valid.wallets[0], createdAt: 1.5 }] }, /wallet 1 createdAt.*safe integer/i],
+    [{ ...valid, wallets: [{ ...valid.wallets[0], createdAt: future }] }, /wallet 1 createdAt.*future/i],
+  ];
+  for (const [value, expected] of cases) assert.throws(() => validateLaunchVaultPayload(value), expected);
+});
+
 test("merge validates current and imported wallet key-address coherence before changing the vault", () => {
   const current = payloadWith([walletRecord(1)]);
   const mismatched = {
@@ -335,6 +370,9 @@ test("backup parsing rejects malformed timestamps, salt, iv, and ciphertext befo
   const malformed: Array<[string, unknown, RegExp]> = [
     ["createdAt", { ...backup, header: { ...backup.header, createdAt: "today" } }, /metadata.*createdAt/i],
     ["updatedAt", { ...backup, header: { ...backup.header, updatedAt: Number.NaN } }, /metadata.*updatedAt/i],
+    ["fractional createdAt", { ...backup, header: { ...backup.header, createdAt: 1.5 } }, /metadata.*createdAt.*safe integer/i],
+    ["reversed timestamps", { ...backup, header: { ...backup.header, createdAt: CREATED_AT + 1, updatedAt: CREATED_AT } }, /metadata.*createdAt.*updatedAt/i],
+    ["future updatedAt", { ...backup, header: { ...backup.header, updatedAt: Date.now() + 24 * 60 * 60 * 1000 } }, /metadata.*updatedAt.*future/i],
     ["salt encoding", { ...backup, header: { ...backup.header, salt: "not base64!" } }, /metadata.*salt/i],
     ["salt length", { ...backup, header: { ...backup.header, salt: Buffer.alloc(15).toString("base64") } }, /metadata.*salt/i],
     ["iv length", { ...backup, header: { ...backup.header, iv: Buffer.alloc(11).toString("base64") } }, /metadata.*iv/i],

@@ -8,6 +8,7 @@ import {
   LAUNCH_VAULT_KDF,
   LAUNCH_VAULT_VERSION,
   createLaunchVaultPayload,
+  decryptLaunchVaultBackup,
   encryptLaunchVaultPayload,
   serializeEncryptedLaunchVaultBackup,
   type EncryptedLaunchVaultBackup,
@@ -105,7 +106,7 @@ test("restore authentication canonicalizes the envelope and exposes only an auth
     raw,
     candidatePassphrase: PASSPHRASE,
     storageSnapshot: null,
-    existingVault: null,
+    currentVaultPassphrase: null,
   });
 
   assert.equal(prepared.canonicalSerialized, serializeEncryptedLaunchVaultBackup(parsed));
@@ -133,10 +134,9 @@ test("wrong passphrase and tampered authentication tag leave exact storage bytes
   const store = memoryStorage(existingRaw);
   const currentVaultSnapshot = structuredClone(currentVault);
   const currentBackupSnapshot = structuredClone(currentBackup);
-  const existingVault = { encryptedBackup: currentBackup, payload: currentVault };
 
-  await assert.rejects(() => authenticateLaunchVaultBackupRestore({ raw: JSON.stringify(backup), candidatePassphrase: "wrong candidate passphrase", storageSnapshot: existingRaw, existingVault }));
-  await assert.rejects(() => authenticateLaunchVaultBackupRestore({ raw: JSON.stringify(tampered), candidatePassphrase: PASSPHRASE, storageSnapshot: existingRaw, existingVault }));
+  await assert.rejects(() => authenticateLaunchVaultBackupRestore({ raw: JSON.stringify(backup), candidatePassphrase: "wrong candidate passphrase", storageSnapshot: existingRaw, currentVaultPassphrase: EXISTING_PASSPHRASE }));
+  await assert.rejects(() => authenticateLaunchVaultBackupRestore({ raw: JSON.stringify(tampered), candidatePassphrase: PASSPHRASE, storageSnapshot: existingRaw, currentVaultPassphrase: EXISTING_PASSPHRASE }));
 
   assert.equal(store.value, existingRaw);
   assert.equal(store.writes, 0);
@@ -155,11 +155,10 @@ test("malformed decrypted JSON and wallet address/key mismatch fail before stora
   const store = memoryStorage(existingRaw);
   const currentVaultSnapshot = structuredClone(currentVault);
   const currentBackupSnapshot = structuredClone(currentBackup);
-  const existingVault = { encryptedBackup: currentBackup, payload: currentVault };
 
-  await assert.rejects(() => authenticateLaunchVaultBackupRestore({ raw: JSON.stringify(malformedJson), candidatePassphrase: PASSPHRASE, storageSnapshot: existingRaw, existingVault }));
+  await assert.rejects(() => authenticateLaunchVaultBackupRestore({ raw: JSON.stringify(malformedJson), candidatePassphrase: PASSPHRASE, storageSnapshot: existingRaw, currentVaultPassphrase: EXISTING_PASSPHRASE }));
   await assert.rejects(
-    () => authenticateLaunchVaultBackupRestore({ raw: JSON.stringify(mismatched), candidatePassphrase: PASSPHRASE, storageSnapshot: existingRaw, existingVault }),
+    () => authenticateLaunchVaultBackupRestore({ raw: JSON.stringify(mismatched), candidatePassphrase: PASSPHRASE, storageSnapshot: existingRaw, currentVaultPassphrase: EXISTING_PASSPHRASE }),
     /address does not match.*private key/i,
   );
 
@@ -169,7 +168,7 @@ test("malformed decrypted JSON and wallet address/key mismatch fail before stora
   assert.deepEqual(currentBackup, currentBackupSnapshot);
 });
 
-test("replacement requires the current stored vault to be unlocked and bound to the exact storage snapshot", async () => {
+test("replacement rollback baseline is decrypted from the exact current storage bytes, never an independently supplied payload", async () => {
   const existingPayload = payload("launch-a", CREATED_AT + 1_000);
   const existingBackup = await encryptLaunchVaultPayload(existingPayload, EXISTING_PASSPHRASE, existingPayload.updatedAt);
   const existingRaw = serializeEncryptedLaunchVaultBackup(existingBackup);
@@ -177,19 +176,36 @@ test("replacement requires the current stored vault to be unlocked and bound to 
   const candidateBackup = await encryptLaunchVaultPayload(candidatePayload, PASSPHRASE, candidatePayload.updatedAt);
 
   await assert.rejects(
-    () => authenticateLaunchVaultBackupRestore({ raw: JSON.stringify(candidateBackup), candidatePassphrase: PASSPHRASE, storageSnapshot: existingRaw, existingVault: null }),
-    /unlock the current browser vault/i,
+    () => authenticateLaunchVaultBackupRestore({ raw: JSON.stringify(candidateBackup), candidatePassphrase: PASSPHRASE, storageSnapshot: existingRaw, currentVaultPassphrase: null }),
+    /current browser vault passphrase/i,
   );
-  const differentStoredBackup = await encryptLaunchVaultPayload(existingPayload, EXISTING_PASSPHRASE, existingPayload.updatedAt);
   await assert.rejects(
     () => authenticateLaunchVaultBackupRestore({
       raw: JSON.stringify(candidateBackup),
       candidatePassphrase: PASSPHRASE,
-      storageSnapshot: serializeEncryptedLaunchVaultBackup(differentStoredBackup),
-      existingVault: { encryptedBackup: existingBackup, payload: existingPayload },
+      storageSnapshot: existingRaw,
+      currentVaultPassphrase: "wrong current vault passphrase",
     }),
-    /changed|does not match/i,
+    /operation|decrypt|authenticate|passphrase/i,
   );
+});
+
+test("forged unauthenticated header timestamps are reconstructed from authenticated payload before persistence", async () => {
+  const candidatePayload = payload("launch-b", CREATED_AT + 2_000);
+  const candidateBackup = await encryptLaunchVaultPayload(candidatePayload, PASSPHRASE, candidatePayload.updatedAt);
+  const forged = { ...candidateBackup, header: { ...candidateBackup.header, createdAt: 1, updatedAt: 2 } };
+  const prepared = await authenticateLaunchVaultBackupRestore({
+    raw: JSON.stringify(forged),
+    candidatePassphrase: PASSPHRASE,
+    storageSnapshot: null,
+    currentVaultPassphrase: null,
+  });
+
+  assert.equal(prepared.backup.header.createdAt, candidatePayload.createdAt);
+  assert.equal(prepared.backup.header.updatedAt, candidatePayload.updatedAt);
+  assert.equal(JSON.parse(prepared.canonicalSerialized).header.createdAt, candidatePayload.createdAt);
+  assert.equal(JSON.parse(prepared.canonicalSerialized).header.updatedAt, candidatePayload.updatedAt);
+  assert.deepEqual(await decryptLaunchVaultBackup(prepared.backup, PASSPHRASE), candidatePayload);
 });
 
 test("same-launch rollback uses decrypted payload timestamps and ignores forged header timestamps", async () => {
@@ -204,7 +220,7 @@ test("same-launch rollback uses decrypted payload timestamps and ignores forged 
       raw: JSON.stringify(forgedNewHeader),
       candidatePassphrase: PASSPHRASE,
       storageSnapshot: existingRaw,
-      existingVault: { encryptedBackup: existingBackup, payload: existingPayload },
+      currentVaultPassphrase: EXISTING_PASSPHRASE,
     }),
     /older.*rollback/i,
   );
@@ -222,7 +238,7 @@ test("same timestamp with different ciphertext is blocked as an explicit conflic
       raw: JSON.stringify(conflictingBackup),
       candidatePassphrase: PASSPHRASE,
       storageSnapshot: existingRaw,
-      existingVault: { encryptedBackup: existingBackup, payload: existingPayload },
+      currentVaultPassphrase: EXISTING_PASSPHRASE,
     }),
     /same updatedAt.*different ciphertext|conflict/i,
   );
@@ -238,19 +254,19 @@ test("commit requires candidate-specific confirmation and aborts if storage chan
     raw: JSON.stringify(candidateBackup),
     candidatePassphrase: PASSPHRASE,
     storageSnapshot: existingRaw,
-    existingVault: { encryptedBackup: existingBackup, payload: existingPayload },
+    currentVaultPassphrase: EXISTING_PASSPHRASE,
   });
   const store = memoryStorage(existingRaw);
 
   assert.equal(expectedLaunchVaultRestoreConfirmation(prepared), "REPLACE launch-b");
   assert.throws(
-    () => commitAuthenticatedLaunchVaultRestore({ prepared, confirmation: "REPLACE VAULT", storage: store.storage }),
+    () => commitAuthenticatedLaunchVaultRestore({ prepared, confirmation: "REPLACE VAULT", storage: store.storage, eventTarget: new EventTarget(), sourceId: "test" }),
     /REPLACE launch-b/,
   );
   assert.equal(store.writes, 0);
   store.replaceExternally(`${existingRaw}\nexternal change`);
   assert.throws(
-    () => commitAuthenticatedLaunchVaultRestore({ prepared, confirmation: "REPLACE launch-b", storage: store.storage }),
+    () => commitAuthenticatedLaunchVaultRestore({ prepared, confirmation: "REPLACE launch-b", storage: store.storage, eventTarget: new EventTarget(), sourceId: "test" }),
     /changed since restore began/i,
   );
   assert.equal(store.writes, 0);
@@ -264,10 +280,12 @@ test("successful commit performs one canonical storage write after the final sto
     raw: JSON.stringify({ ...candidateBackup, ignored: "strip me" }),
     candidatePassphrase: PASSPHRASE,
     storageSnapshot: null,
-    existingVault: null,
+    currentVaultPassphrase: null,
   });
   const order: string[] = [];
   let value: string | null = null;
+  const eventTarget = new EventTarget();
+  eventTarget.addEventListener("compas-launch-vault:lifecycle", () => order.push("event"));
 
   const committed = commitAuthenticatedLaunchVaultRestore({
     prepared,
@@ -276,9 +294,11 @@ test("successful commit performs one canonical storage write after the final sto
       getItem: () => { order.push("read"); return value; },
       setItem: (_key, next) => { order.push("write"); value = next; },
     },
+    eventTarget,
+    sourceId: "restore-test",
   });
 
-  assert.deepEqual(order, ["read", "write"]);
+  assert.deepEqual(order, ["read", "write", "event"]);
   assert.equal(value, prepared.canonicalSerialized);
   assert.deepEqual(committed, candidateBackup);
 });

@@ -80,10 +80,13 @@ test("guided holder flow keeps the required web-first order and advances one gat
     "funding-review",
     "funding",
     "simulate",
+    "mint",
+    "receipts",
+    "finish",
   ]);
   assert.equal(resolveGuidedHolderStep({ holder: false, burners: false, drop: false, fundingReview: false, fundingComplete: false }), "holder");
   assert.equal(resolveGuidedHolderStep({ holder: true, burners: true, drop: true, fundingReview: true, fundingComplete: false }), "funding");
-  assert.equal(resolveGuidedHolderStep({ holder: true, burners: true, drop: true, fundingReview: true, fundingComplete: true }), "simulate");
+  assert.equal(resolveGuidedHolderStep({ holder: true, burners: true, drop: true, fundingReview: true, fundingComplete: true, simulationComplete: false, broadcastComplete: false, receiptsComplete: false }), "simulate");
 });
 
 test("projectGuidedBurners uses the canonical Vault public projection and filters to the drop chain", () => {
@@ -115,7 +118,7 @@ test("buildGuidedFundingReview calculates an exact holder-funded row for every c
   assert.match(plan.review.warning, /explicit wallet confirmation.*each funding transaction/i);
 });
 
-test("buildGuidedMintSimulationPlan always routes the recipient to the verified holder and exposes no broadcast action", () => {
+test("buildGuidedMintSimulationPlan routes the recipient to the verified holder and requires exact live consent", () => {
   const preview = buildGuidedMintSimulationPlan({
     holder,
     discovery,
@@ -123,11 +126,13 @@ test("buildGuidedMintSimulationPlan always routes the recipient to the verified 
     burnerAddresses: [BURNER_TWO],
     quantityPerBurner: 1,
     maxTotalValueWei: BigInt("50000000000000000"),
+    mintGasLimit: 180_000,
+    maxFeePerGasWei: BigInt(2_000_000_000),
   });
 
-  assert.equal(preview.mode, "simulation-only");
-  assert.equal(preview.safety.previewOnly, true);
-  assert.equal(preview.safety.broadcast, false);
+  assert.equal(preview.mode, "exact-bound-holder-run");
+  assert.equal(preview.safety.automaticBroadcast, false);
+  assert.equal(preview.safety.explicitConsentRequired, true);
   assert.equal(preview.plan.transactions.length, 1);
   assert.equal(preview.plan.transactions[0].walletAddress, BURNER_TWO);
   assert.equal(preview.plan.transactions.every((transaction) => transaction.recipientMode === "holder"), true);
@@ -155,5 +160,13 @@ test("guided funding and simulation fail closed without an executable public sta
     }),
     /executable.*public.*SeaDrop/i,
   );
-  assert.throws(() => buildGuidedMintSimulationPlan({ holder, discovery: watchOnly, vault, quantityPerBurner: 1, maxTotalValueWei: BigInt("50000000000000000") }), /executable.*public.*SeaDrop/i);
+  assert.throws(() => buildGuidedMintSimulationPlan({
+    holder,
+    discovery: watchOnly,
+    vault,
+    quantityPerBurner: 1,
+    maxTotalValueWei: BigInt("50000000000000000"),
+    mintGasLimit: 180_000,
+    maxFeePerGasWei: BigInt(2_000_000_000),
+  }), /executable.*public.*SeaDrop/i);
 });

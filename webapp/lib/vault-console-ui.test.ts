@@ -35,12 +35,14 @@ function restorePanel(overrides: Partial<Parameters<typeof RestoreBackupPanel>[0
     hasVault: true,
     replaceConfirmation: "",
     restoreFileName: null,
+    restoreCurrentPassphrase: "",
     restorePassphrase: "",
     restoreText: "",
     onAuthenticate: noop,
     onCommit: noop,
     onFile: noop,
     onReplaceConfirmation: noop,
+    onRestoreCurrentPassphrase: noop,
     onRestorePassphrase: noop,
     onRestoreText: noop,
     ...overrides,
@@ -169,5 +171,15 @@ test("restore transient state is cleared after success, lock, and wipe", () => {
   assert.match(consoleSource, /setUnlockPassphrase\(""\)/);
   assert.match(consoleSource, /setRestorePassphrase\(""\)/);
   assert.match(consoleSource, /setAuthenticatedRestore\(null\)/);
-  assert.match(consoleSource, /window\.localStorage\.removeItem\(LAUNCH_VAULT_STORAGE_KEY\)[\s\S]{0,700}setCreatePassphrase\(""\)[\s\S]{0,200}setCreateConfirm\(""\)/);
+  assert.match(consoleSource, /removeLaunchVaultStorage\([\s\S]{0,900}setCreatePassphrase\(""\)[\s\S]{0,200}setCreateConfirm\(""\)/);
+});
+
+test("Vault console uses canonical lifecycle writes and generation cancellation for stale file/auth completions", () => {
+  assert.match(consoleSource, /writeLaunchVaultStorage/);
+  assert.match(consoleSource, /removeLaunchVaultStorage/);
+  assert.match(consoleSource, /subscribeToLaunchVaultLifecycle/);
+  assert.match(consoleSource, /createLaunchVaultGenerationGuard/);
+  assert.match(consoleSource, /restoreFileGeneration/);
+  assert.match(consoleSource, /restoreAuthGeneration/);
+  assert.doesNotMatch(consoleSource, /window\.localStorage\.(?:setItem|removeItem)\(LAUNCH_VAULT_STORAGE_KEY/);
 });

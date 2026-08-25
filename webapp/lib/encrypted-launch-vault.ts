@@ -72,7 +72,9 @@ export type RotatedLaunchVaultBackup = {
 const PRIVATE_KEY_TOKEN_RE = /(?<![A-Za-z0-9_])(?:0x)?[0-9a-fA-F]{64}(?![A-Za-z0-9_])/g;
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const CANONICAL_LAUNCH_ID_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const DEFAULT_LAUNCH_ID = "launch-vault";
+export const MAX_LAUNCH_VAULT_FUTURE_MS = 5 * 60 * 1000;
 
 export function createLaunchVaultPayload({
   launchId,
@@ -402,6 +404,7 @@ function assertEncryptedBackup(backup: unknown): asserts backup is EncryptedLaun
   }
   assertTimestamp(header.createdAt, "Launch vault backup metadata createdAt");
   assertTimestamp(header.updatedAt, "Launch vault backup metadata updatedAt");
+  assertTimestampOrder(header.createdAt, header.updatedAt, "Launch vault backup metadata");
   assertBase64ByteLength(header.salt, "salt", 16);
   assertBase64ByteLength(header.iv, "iv", 12);
   assertBase64ByteLength(backup.ciphertext, "ciphertext", undefined, 17);
@@ -429,10 +432,11 @@ export function validateLaunchVaultPayload(payload: unknown): asserts payload is
   if (!isRecord(payload) || payload.version !== LAUNCH_VAULT_VERSION) {
     throw new Error("Launch vault payload is unsupported.");
   }
-  assertNonEmptyString(payload.launchId, "Launch vault launchId");
+  assertCanonicalLaunchId(payload.launchId);
   assertNonEmptyString(payload.launchName, "Launch vault launchName");
   assertTimestamp(payload.createdAt, "Launch vault createdAt");
   assertTimestamp(payload.updatedAt, "Launch vault updatedAt");
+  assertTimestampOrder(payload.createdAt, payload.updatedAt, "Launch vault");
   if (!Array.isArray(payload.wallets)) {
     throw new Error("Launch vault wallet list is missing.");
   }
@@ -506,9 +510,32 @@ function assertNonEmptyString(value: unknown, field: string): string {
   return value.trim();
 }
 
+function assertCanonicalLaunchId(value: unknown): asserts value is string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 72 ||
+    !CANONICAL_LAUNCH_ID_RE.test(value)
+  ) {
+    throw new Error("Launch vault launchId must be a canonical ASCII slug of at most 72 lowercase letters, digits, and single hyphens.");
+  }
+}
+
 function assertTimestamp(value: unknown, field: string): asserts value is number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    throw new Error(`${field} must be a finite non-negative timestamp.`);
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${field} must be a non-negative safe integer timestamp.`);
+  }
+  if (Number.isNaN(new Date(value).getTime())) {
+    throw new Error(`${field} must represent a valid date.`);
+  }
+  if (value > Date.now() + MAX_LAUNCH_VAULT_FUTURE_MS) {
+    throw new Error(`${field} is unreasonably far in the future.`);
+  }
+}
+
+function assertTimestampOrder(createdAt: number, updatedAt: number, field: string): void {
+  if (createdAt > updatedAt) {
+    throw new Error(`${field} createdAt must be less than or equal to updatedAt.`);
   }
 }
 

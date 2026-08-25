@@ -8,6 +8,7 @@ import {
   type EncryptedLaunchVaultBackup,
   type LaunchVaultPayload,
 } from "./encrypted-launch-vault";
+import { writeLaunchVaultStorage, type LaunchVaultStorage } from "./launch-vault-lifecycle";
 
 export const MAX_LAUNCH_VAULT_BACKUP_BYTES = 1024 * 1024;
 
@@ -28,15 +29,7 @@ export type AuthenticatedLaunchVaultRestore = {
   replacesExisting: boolean;
 };
 
-export type ExistingUnlockedLaunchVault = {
-  encryptedBackup: EncryptedLaunchVaultBackup;
-  payload: LaunchVaultPayload;
-};
-
-export type LaunchVaultRestoreStorage = {
-  getItem: (key: string) => string | null;
-  setItem: (key: string, value: string) => void;
-};
+export type LaunchVaultRestoreStorage = LaunchVaultStorage;
 
 export function assertLaunchVaultBackupFileSize(size: number): void {
   if (!Number.isFinite(size) || size < 0) {
@@ -71,27 +64,39 @@ export async function authenticateLaunchVaultBackupRestore({
   raw,
   candidatePassphrase,
   storageSnapshot,
-  existingVault,
+  currentVaultPassphrase,
 }: {
   raw: string;
   candidatePassphrase: string;
   storageSnapshot: string | null;
-  existingVault: ExistingUnlockedLaunchVault | null;
+  currentVaultPassphrase: string | null;
 }): Promise<AuthenticatedLaunchVaultRestore> {
-  const backup = parseLaunchVaultBackupRestore(raw);
-  const canonicalSerialized = serializeEncryptedLaunchVaultBackup(backup);
+  const parsedBackup = parseLaunchVaultBackupRestore(raw);
 
   // AES-GCM authentication and deep payload validation both happen before a
   // commit candidate exists. The passphrase is used only by this call.
-  const payload = await decryptLaunchVaultBackup(backup, candidatePassphrase);
+  const payload = await decryptLaunchVaultBackup(parsedBackup, candidatePassphrase);
   validateLaunchVaultPayload(payload);
+  const backup: EncryptedLaunchVaultBackup = {
+    ...parsedBackup,
+    header: {
+      ...parsedBackup.header,
+      createdAt: payload.createdAt,
+      updatedAt: payload.updatedAt,
+    },
+  };
+  const canonicalSerialized = serializeEncryptedLaunchVaultBackup(backup);
 
   if (storageSnapshot !== null) {
-    if (!existingVault) {
-      throw new Error("Unlock the current browser vault before authenticating a replacement backup.");
+    if (!currentVaultPassphrase) {
+      throw new Error("Enter the current browser Vault passphrase before authenticating a replacement backup.");
     }
-    validateExistingVaultMatchesStorage(storageSnapshot, existingVault);
-    assertNoSameLaunchRollbackOrConflict(existingVault, backup, payload);
+    // The rollback baseline is the authenticated plaintext of the exact bytes
+    // read from localStorage. No independently supplied payload is trusted.
+    const currentStoredBackup = parseLaunchVaultBackupRestore(storageSnapshot);
+    const currentStoredPayload = await decryptLaunchVaultBackup(currentStoredBackup, currentVaultPassphrase);
+    validateLaunchVaultPayload(currentStoredPayload);
+    assertNoSameLaunchRollbackOrConflict(currentStoredBackup, currentStoredPayload, backup, payload);
   }
 
   return {
@@ -118,10 +123,14 @@ export function commitAuthenticatedLaunchVaultRestore({
   prepared,
   confirmation,
   storage,
+  eventTarget,
+  sourceId,
 }: {
   prepared: AuthenticatedLaunchVaultRestore;
   confirmation: string;
   storage: LaunchVaultRestoreStorage;
+  eventTarget: EventTarget;
+  sourceId: string;
 }): EncryptedLaunchVaultBackup {
   if (prepared.replacesExisting) {
     const expected = expectedLaunchVaultRestoreConfirmation(prepared);
@@ -137,29 +146,22 @@ export function commitAuthenticatedLaunchVaultRestore({
     throw new Error("The encrypted browser vault changed since restore began. Authenticate the backup again before replacing it.");
   }
 
-  storage.setItem(LAUNCH_VAULT_STORAGE_KEY, prepared.canonicalSerialized);
+  writeLaunchVaultStorage({
+    storage,
+    eventTarget,
+    sourceId,
+    action: "restore",
+    serialized: prepared.canonicalSerialized,
+  });
   return prepared.backup;
 }
 
-function validateExistingVaultMatchesStorage(
-  storageSnapshot: string,
-  existingVault: ExistingUnlockedLaunchVault,
-): void {
-  validateLaunchVaultPayload(existingVault.payload);
-  const parsedStoredBackup = parseLaunchVaultBackupRestore(storageSnapshot);
-  const canonicalStoredBackup = serializeEncryptedLaunchVaultBackup(parsedStoredBackup);
-  const canonicalUnlockedBackup = serializeEncryptedLaunchVaultBackup(existingVault.encryptedBackup);
-  if (canonicalStoredBackup !== canonicalUnlockedBackup) {
-    throw new Error("The unlocked Vault does not match the encrypted backup currently stored in this browser.");
-  }
-}
-
 function assertNoSameLaunchRollbackOrConflict(
-  existingVault: ExistingUnlockedLaunchVault,
+  existingBackup: EncryptedLaunchVaultBackup,
+  existingPayload: LaunchVaultPayload,
   candidateBackup: EncryptedLaunchVaultBackup,
   candidatePayload: LaunchVaultPayload,
 ): void {
-  const existingPayload = existingVault.payload;
   if (candidatePayload.launchId !== existingPayload.launchId) return;
 
   // Only authenticated plaintext timestamps participate in rollback checks.
@@ -169,7 +171,7 @@ function assertNoSameLaunchRollbackOrConflict(
   }
   if (
     candidatePayload.updatedAt === existingPayload.updatedAt &&
-    candidateBackup.ciphertext !== existingVault.encryptedBackup.ciphertext
+    candidateBackup.ciphertext !== existingBackup.ciphertext
   ) {
     throw new Error("Same-launch restore conflict: the authenticated payload has the same updatedAt but different ciphertext. Resolve the conflict explicitly before restoring.");
   }

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState, useEffect } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { formatEther, parseEther, parseUnits } from "ethers";
 
 import {
@@ -8,15 +8,20 @@ import {
   decryptLaunchVaultBackup,
   maskVaultAddress,
   parseEncryptedLaunchVaultBackup,
+  type LaunchVaultPayload,
   type LaunchVaultPublicWallet,
 } from "@/lib/encrypted-launch-vault";
 import {
   GUIDED_HOLDER_STEPS,
+  assessGuidedFinish,
   buildGuidedFundingReview,
   buildGuidedMintSimulationPlan,
+  checkGuidedExecutionCapabilities,
   projectGuidedBurners,
+  readGuidedBurnerBalances,
   requireExecutablePublicStage,
   resolveGuidedHolderStep,
+  type GuidedExecutionCapabilities,
   type GuidedHolderStepId,
 } from "@/lib/guided-holder-flow";
 import {
@@ -30,8 +35,31 @@ import {
 } from "@/lib/connected-holder-funding";
 import type { BurnerFundingPlan } from "@/lib/burner-funding";
 import { fetchSignedGateSession, readGateSession, type CompasGateSession } from "@/lib/compas-gate";
-import { simulatePreparedBrowserMint, type BrowserPreparedMint } from "@/lib/browser-broadcast";
+import {
+  broadcastPreparedBrowserMint,
+  createSubmittedMintReceipt,
+  invalidateBrowserMintTransactions,
+  markGuidedMintReceiptsForReconciliation,
+  mergeGuidedMintReceipts,
+  pollPreparedBrowserMintReceipt,
+  revokePreparedBrowserMintSigners,
+  simulatePreparedBrowserMint,
+  type BrowserMintPlan,
+  type BrowserPreparedMint,
+  type GuidedMintReceipt,
+} from "@/lib/browser-broadcast";
+import {
+  GUIDED_HOLDER_RECOVERY_STORAGE_KEY,
+  buildGuidedHolderRecoveryJournal,
+  parseGuidedHolderRecoveryJournal,
+  readGuidedHolderRecoveryJournal,
+  rehydrateGuidedRecoveryBalancePlan,
+  rehydrateGuidedRecoveryTransactions,
+  writeGuidedHolderRecoveryJournal,
+  type GuidedHolderRecoveryJournal,
+} from "@/lib/guided-holder-recovery";
 import type { MintDiscoveryError, MintDiscoveryResponse } from "@/lib/mint-types";
+import { createLaunchVaultGenerationGuard, subscribeToLaunchVaultLifecycle } from "@/lib/launch-vault-lifecycle";
 
 type AdvancedTab = "Vault" | "Mints" | "Disperse";
 
@@ -51,6 +79,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
   const [busy, setBusy] = useState<string | null>(null);
 
   const [vaultPassphrase, setVaultPassphrase] = useState("");
+  const [unlockedVault, setUnlockedVault] = useState<LaunchVaultPayload | null>(null);
   const [burners, setBurners] = useState<LaunchVaultPublicWallet[]>([]);
   const [selectedBurnerAddresses, setSelectedBurnerAddresses] = useState<string[]>([]);
 
@@ -61,17 +90,37 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
   const [quantityPerBurner, setQuantityPerBurner] = useState(1);
   const [mintGasLimit, setMintGasLimit] = useState(250_000);
   const [maxFeeGwei, setMaxFeeGwei] = useState("0.08");
-  const [bufferPercent, setBufferPercent] = useState("5");
-  const [maxTotalEth, setMaxTotalEth] = useState("0.25");
+  const [bufferPercent, setBufferPercent] = useState("0");
+  const [mintValueMaxEth, setMintValueMaxEth] = useState("0.25");
+  const [holderFundingCapEth, setHolderFundingCapEth] = useState("0.30");
   const [reviewedQuantity, setReviewedQuantity] = useState<number | null>(null);
   const [fundingPlan, setFundingPlan] = useState<BurnerFundingPlan | null>(null);
+  const [executionPlan, setExecutionPlan] = useState<BrowserMintPlan | null>(null);
+  const [executionCapabilities, setExecutionCapabilities] = useState<GuidedExecutionCapabilities | null>(null);
   const [preflight, setPreflight] = useState<ConnectedHolderFundingPreflight | null>(null);
   const [fundingConsent, setFundingConsent] = useState<Record<string, boolean>>({});
   const [submissions, setSubmissions] = useState<Record<string, ConnectedHolderFundingSubmission>>({});
   const [verifications, setVerifications] = useState<ConnectedHolderFundingVerification[]>([]);
 
-  const [simulationPassphrase, setSimulationPassphrase] = useState("");
-  const [simulations, setSimulations] = useState<BrowserPreparedMint[]>([]);
+  const [transactions, setTransactions] = useState<BrowserPreparedMint[]>([]);
+  const [expectedTransactionCount, setExpectedTransactionCount] = useState<number | null>(null);
+  const [liveConsentOpen, setLiveConsentOpen] = useState(false);
+  const [liveConsent, setLiveConsent] = useState(false);
+  const [liveConsentBinding, setLiveConsentBinding] = useState<string | null>(null);
+  const [receipts, setReceipts] = useState<GuidedMintReceipt[]>([]);
+  const [receiptPolling, setReceiptPolling] = useState(false);
+  const [burnerBalances, setBurnerBalances] = useState<Record<string, bigint | null>>({});
+  const [finished, setFinished] = useState(false);
+  const [recoveryJournal, setRecoveryJournal] = useState<GuidedHolderRecoveryJournal | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      return readGuidedHolderRecoveryJournal(window.localStorage);
+    } catch {
+      return null;
+    }
+  });
+  const [recoveryBalances, setRecoveryBalances] = useState<Record<string, bigint | null>>({});
+  const vaultGeneration = useRef(createLaunchVaultGenerationGuard());
 
   useEffect(() => {
     let cancelled = false;
@@ -93,6 +142,49 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
     };
   }, []);
 
+  useEffect(() => subscribeToLaunchVaultLifecycle(window, () => {
+    vaultGeneration.current.invalidate();
+    setUnlockedVault(null);
+    setVaultPassphrase("");
+    setBurners([]);
+    setSelectedBurnerAddresses([]);
+    setTransactions((current) => {
+      return invalidateBrowserMintTransactions(current);
+    });
+    setReceipts((current) => markGuidedMintReceiptsForReconciliation(current));
+    setExecutionPlan((current) => {
+      if (current) revokePreparedBrowserMintSigners(current.transactions);
+      return null;
+    });
+    setReviewedQuantity(null);
+    setFundingPlan(null);
+    setExecutionCapabilities(null);
+    setPreflight(null);
+    setFundingConsent({});
+    setSubmissions({});
+    setVerifications([]);
+    setBurnerBalances({});
+    setFinished(false);
+    setLiveConsent(false);
+    setLiveConsentOpen(false);
+    setLiveConsentBinding(null);
+    setBusy(null);
+    setNotice("The encrypted browser Vault changed. Funding authority, capabilities, preflight, consents, and signer state were revoked. Submitted hashes remain in the recovery journal and require receipt reconciliation.");
+  }), []);
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== GUIDED_HOLDER_RECOVERY_STORAGE_KEY) return;
+      try {
+        setRecoveryJournal(event.newValue ? parseGuidedHolderRecoveryJournal(event.newValue) : null);
+      } catch {
+        setError("A recovery journal from another tab failed validation and was ignored.");
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
   const selectedBurners = useMemo(
     () => burners.filter((wallet) => selectedBurnerAddresses.some((address) => address.toLowerCase() === wallet.address.toLowerCase())),
     [burners, selectedBurnerAddresses],
@@ -101,15 +193,36 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
     () => Boolean(fundingPlan) && fundingPlan!.transactions.every((row) => verifications.some((verification) => verification.transactionId === row.id && verification.verified)),
     [fundingPlan, verifications],
   );
+  const simulationComplete = transactions.length > 0 && transactions.every((transaction) => transaction.status === "simulated" || transaction.status === "broadcast");
+  const broadcastComplete = transactions.length > 0 && transactions.every((transaction) => transaction.status === "broadcast" || transaction.broadcastAttempted === true);
+  const receiptsComplete = transactions.length > 0 && receipts.length === transactions.length && receipts.every((receipt) => receipt.status === "Confirmed" || receipt.status === "Failed");
+  const confirmedReceipts = receipts.filter((receipt) => receipt.status === "Confirmed");
+  const finishAssessment = useMemo(
+    () => holder ? assessGuidedFinish({ holderAddress: holder.address, expectedTransactionCount: expectedTransactionCount ?? 0, transactions, receipts, burnerBalances }) : null,
+    [holder, expectedTransactionCount, transactions, receipts, burnerBalances],
+  );
   const readiness = {
     holder: Boolean(holder),
     burners: selectedBurners.length > 0,
     drop: Boolean(discovery),
-    fundingReview: Boolean(fundingPlan),
+    fundingReview: Boolean(fundingPlan && executionCapabilities?.ready),
     fundingComplete,
+    simulationComplete,
+    broadcastComplete,
+    receiptsComplete,
   };
   const recommendedStep = resolveGuidedHolderStep(readiness);
   const maxReachableIndex = GUIDED_HOLDER_STEPS.findIndex((item) => item.id === recommendedStep);
+  const currentStepIndex = Math.max(0, GUIDED_HOLDER_STEPS.findIndex((item) => item.id === step));
+  const currentStep = GUIDED_HOLDER_STEPS[currentStepIndex];
+
+  useEffect(() => {
+    if (step !== "receipts" || receiptPolling || !receipts.some((receipt) => receipt.status === "Submitted" || receipt.status === "Confirming" || receipt.status === "Unknown")) return;
+    const timer = window.setTimeout(() => void pollMintReceipts(), 3_000);
+    return () => window.clearTimeout(timer);
+    // Receipt polling is deliberately the only repeated network action; it never signs or sends.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, receipts, receiptPolling, transactions]);
 
   function resetMessages() {
     setNotice(null);
@@ -121,27 +234,76 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
     else window.location.assign(tab === "Vault" ? "/vault" : tab === "Disperse" ? "/disperse" : "/console");
   }
 
+  function persistRecoveryEvidence(input: {
+    plan: BrowserMintPlan;
+    transactionRows: readonly BrowserPreparedMint[];
+    receiptRows: readonly GuidedMintReceipt[];
+    fundingRows: readonly ConnectedHolderFundingSubmission[];
+  }): GuidedHolderRecoveryJournal | null {
+    if (!holder || !discovery) return null;
+    try {
+      const journal = buildGuidedHolderRecoveryJournal({
+        plan: input.plan,
+        collection: { address: discovery.collection.address, name: discovery.collection.name },
+        recipient: holder.address,
+        transactions: input.transactionRows,
+        receipts: input.receiptRows,
+        fundingSubmissions: input.fundingRows,
+      });
+      writeGuidedHolderRecoveryJournal(window.localStorage, journal);
+      setRecoveryJournal(journal);
+      return journal;
+    } catch (journalError) {
+      setError(`Recovery evidence could not be saved: ${journalError instanceof Error ? journalError.message : "unknown journal error"}`);
+      return null;
+    }
+  }
+
+  function clearBoundRun() {
+    vaultGeneration.current.invalidate();
+    revokePreparedBrowserMintSigners(transactions);
+    if (executionPlan) revokePreparedBrowserMintSigners(executionPlan.transactions);
+    setReviewedQuantity(null);
+    setExpectedTransactionCount(null);
+    setFundingPlan(null);
+    setExecutionPlan(null);
+    setExecutionCapabilities(null);
+    setPreflight(null);
+    setFundingConsent({});
+    setSubmissions({});
+    setVerifications([]);
+    setTransactions([]);
+    setReceipts([]);
+    setBurnerBalances({});
+    setLiveConsent(false);
+    setLiveConsentOpen(false);
+    setLiveConsentBinding(null);
+    setFinished(false);
+  }
+
   async function loadCanonicalBurners(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     resetMessages();
-    setBusy("Unlocking canonical Vault for its public wallet projection…");
+    setBusy("Unlocking the encrypted Vault in this browser run…");
+    const unlockGeneration = vaultGeneration.current.invalidate();
     try {
       const raw = window.localStorage.getItem(LAUNCH_VAULT_STORAGE_KEY);
       if (!raw) throw new Error("No encrypted launch Vault exists in this browser. Create burners in Vault first.");
       const payload = await decryptLaunchVaultBackup(parseEncryptedLaunchVaultBackup(raw), vaultPassphrase);
+      if (
+        !vaultGeneration.current.isCurrent(unlockGeneration) ||
+        window.localStorage.getItem(LAUNCH_VAULT_STORAGE_KEY) !== raw
+      ) throw new Error("The encrypted browser Vault changed while unlock was pending.");
       const projected = [...projectGuidedBurners(payload, "base"), ...projectGuidedBurners(payload, "ethereum")];
       if (projected.length === 0) throw new Error("The encrypted Vault has no ETH or Base wallets yet. Generate burners in Vault first.");
       const generated = projected.filter((wallet) => /^Burner\s+\d+$/i.test(wallet.label));
       const selected = generated.length > 0 ? generated : projected;
+      clearBoundRun();
+      setUnlockedVault(payload);
       setBurners(projected);
       setSelectedBurnerAddresses(selected.map((wallet) => wallet.address));
       setVaultPassphrase("");
-      setReviewedQuantity(null);
-      setFundingPlan(null);
-      setPreflight(null);
-      setSubmissions({});
-      setVerifications([]);
-      setNotice(`${projected.length} public burner address${projected.length === 1 ? "" : "es"} loaded. Private keys were discarded from this step.`);
+      setNotice(`${projected.length} burner address${projected.length === 1 ? "" : "es"} loaded. Signers stay only in memory for this exact guided run and are never displayed.`);
       setStep("drop");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not read the encrypted launch Vault.");
@@ -151,16 +313,12 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
   }
 
   function toggleBurner(address: string) {
+    clearBoundRun();
     setSelectedBurnerAddresses((current) =>
       current.some((value) => value.toLowerCase() === address.toLowerCase())
         ? current.filter((value) => value.toLowerCase() !== address.toLowerCase())
         : [...current, address],
     );
-    setReviewedQuantity(null);
-    setFundingPlan(null);
-    setPreflight(null);
-    setSubmissions({});
-    setVerifications([]);
   }
 
   async function scanDrop(event: FormEvent<HTMLFormElement>) {
@@ -171,7 +329,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
       return;
     }
     if (chainKey !== "base" && chainKey !== "ethereum") {
-      setError("The minimal holder guide supports Base and Ethereum. Use Advanced tools for operator-configured chains.");
+      setError("The holder guide supports Base and Ethereum. Advanced tools cover operator-configured chains.");
       return;
     }
     setBusy("Reading public drop configuration…");
@@ -181,14 +339,9 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
       const body = (await response.json()) as MintDiscoveryResponse | MintDiscoveryError;
       if (!response.ok || !body.ok) throw new Error(body.ok ? "Drop scan failed." : body.error);
       requireExecutablePublicStage(body);
+      clearBoundRun();
       setDiscovery(body);
-      setReviewedQuantity(null);
-      setFundingPlan(null);
-      setPreflight(null);
-      setSubmissions({});
-      setVerifications([]);
-      setSimulations([]);
-      setNotice("Executable public SeaDrop stage read onchain. Review the exact funding rows next.");
+      setNotice("Executable public SeaDrop stage read onchain. Funding stays locked until the exact mint and receipt path passes capability checks.");
       setStep("funding-review");
     } catch (err) {
       setDiscovery(null);
@@ -198,14 +351,17 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
     }
   }
 
-  function reviewFunding() {
+  async function reviewFunding() {
     resetMessages();
-    if (!holder || !discovery) {
-      setError("Verified holder and drop scan are required before funding review.");
+    if (!holder || !discovery || !unlockedVault) {
+      setError("Verified holder, unlocked Vault, and drop scan are required before funding review.");
       return;
     }
+    clearBoundRun();
+    const reviewGeneration = vaultGeneration.current.begin();
+    setBusy("Binding funding, mint recipient, spend maximum, signers, and receipt reads…");
     try {
-      const plan = buildGuidedFundingReview({
+      const funding = buildGuidedFundingReview({
         holder,
         discovery,
         burners: selectedBurners,
@@ -213,67 +369,110 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
         mintGasLimit: BigInt(mintGasLimit),
         maxFeePerGasWei: parseUnits(maxFeeGwei, "gwei"),
         bufferBps: Math.round(Number(bufferPercent) * 100),
-        maxTotalSourceWei: parseEther(maxTotalEth),
+        maxTotalSourceWei: parseEther(holderFundingCapEth),
       });
+      const mintValueMaxWei = parseEther(mintValueMaxEth);
+      const preview = buildGuidedMintSimulationPlan({
+        holder,
+        discovery,
+        vault: unlockedVault,
+        burnerAddresses: funding.transactions.map((row) => row.to),
+        quantityPerBurner,
+        maxTotalValueWei: mintValueMaxWei,
+        mintGasLimit,
+        maxFeePerGasWei: parseUnits(maxFeeGwei, "gwei"),
+      });
+      const capabilities = await checkGuidedExecutionCapabilities({
+        plan: preview.plan,
+        holderAddress: holder.address,
+        burnerAddresses: funding.transactions.map((row) => row.to),
+        mintValueMaxWei,
+      });
+      if (!vaultGeneration.current.isCurrent(reviewGeneration)) {
+        revokePreparedBrowserMintSigners(preview.plan.transactions);
+        return;
+      }
+      if (!funding.review.readyForFunding) throw new Error("Holder funding authorization ceiling is below the reviewed funding rows and transfer gas maximum.");
+      if (!capabilities.ready) {
+        revokePreparedBrowserMintSigners(preview.plan.transactions);
+        throw new Error(`Funding remains locked: ${capabilities.checks.filter((check) => !check.ok).map((check) => check.label).join(", ")}.`);
+      }
       setReviewedQuantity(quantityPerBurner);
-      setFundingPlan(plan);
-      setPreflight(null);
-      setFundingConsent({});
-      setSubmissions({});
-      setVerifications([]);
-      setNotice("Exact per-burner values are ready. Nothing was sent.");
+      setExpectedTransactionCount(preview.plan.transactions.length);
+      setFundingPlan(funding);
+      setExecutionPlan(preview.plan);
+      setExecutionCapabilities(capabilities);
+      setTransactions(preview.plan.transactions);
+      persistRecoveryEvidence({ plan: preview.plan, transactionRows: [], receiptRows: [], fundingRows: [] });
+      setNotice("Exact funding and live mint rows are bound to the same in-memory signers. Nothing was sent.");
       setStep("funding");
     } catch (err) {
-      setReviewedQuantity(null);
-      setFundingPlan(null);
-      setError(err instanceof Error ? err.message : "Could not build the funding review.");
+      if (vaultGeneration.current.isCurrent(reviewGeneration)) setError(err instanceof Error ? err.message : "Could not build a complete funding-to-receipt run.");
+    } finally {
+      if (vaultGeneration.current.isCurrent(reviewGeneration)) setBusy(null);
     }
   }
 
   async function checkHolderFunding() {
     resetMessages();
-    if (!fundingPlan) return;
+    if (!fundingPlan || !executionCapabilities?.ready) return;
+    const fundingPreflightGeneration = vaultGeneration.current.begin();
     setBusy("Checking connected holder, chain, and balance…");
     try {
       const provider = getBrowserProvider();
       await provider.request({ method: "eth_requestAccounts" });
+      if (!vaultGeneration.current.isCurrent(fundingPreflightGeneration)) return;
       const checked = await checkConnectedHolderFundingPreflight(provider, fundingPlan);
+      if (!vaultGeneration.current.isCurrent(fundingPreflightGeneration)) return;
       setPreflight(checked);
       if (!checked.ready) throw new Error("Connected-holder preflight is blocked. Review the failed checks below.");
       setNotice("Connected holder preflight passed. Each transfer still needs its own checkbox and wallet confirmation.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Connected-holder preflight failed.");
+      if (vaultGeneration.current.isCurrent(fundingPreflightGeneration)) setError(err instanceof Error ? err.message : "Connected-holder preflight failed.");
     } finally {
-      setBusy(null);
+      if (vaultGeneration.current.isCurrent(fundingPreflightGeneration)) setBusy(null);
     }
   }
 
   async function submitFunding(transactionId: string) {
     resetMessages();
-    if (!fundingPlan || !preflight) return;
+    if (!fundingPlan || !preflight || !executionCapabilities?.ready) return;
+    const fundingGeneration = vaultGeneration.current.begin();
     setBusy(`Requesting explicit wallet confirmation for ${transactionId}…`);
     try {
       const submission = await submitConnectedHolderFundingTransaction({
-        provider: getBrowserProvider(),
+        provider: authorityCheckedFundingProvider(getBrowserProvider(), () => vaultGeneration.current.isCurrent(fundingGeneration)),
         plan: fundingPlan,
         preflight,
         transactionId,
         explicitConsent: Boolean(fundingConsent[transactionId]),
         priorVerifications: verifications,
       });
-      setSubmissions((current) => ({ ...current, [transactionId]: submission }));
+      const nextSubmissions = { ...submissions, [transactionId]: submission };
+      if (executionPlan) persistRecoveryEvidence({
+        plan: executionPlan,
+        transactionRows: transactions,
+        receiptRows: receipts,
+        fundingRows: Object.values(nextSubmissions),
+      });
+      if (!vaultGeneration.current.isCurrent(fundingGeneration)) {
+        setNotice(`${transactionId} returned a hash after Vault invalidation. It was journaled for reconciliation; funding authority remains revoked.`);
+        return;
+      }
+      setSubmissions(nextSubmissions);
       setFundingConsent((current) => ({ ...current, [transactionId]: false }));
       setNotice(`${transactionId} submitted. Verify its receipt and burner balance before the next transfer.`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Funding request failed.");
+      if (vaultGeneration.current.isCurrent(fundingGeneration)) setError(err instanceof Error ? err.message : "Funding request failed.");
     } finally {
-      setBusy(null);
+      if (vaultGeneration.current.isCurrent(fundingGeneration)) setBusy(null);
     }
   }
 
   async function verifyFunding(transactionId: string) {
     resetMessages();
     if (!fundingPlan || !submissions[transactionId]) return;
+    const verificationGeneration = vaultGeneration.current.begin();
     setBusy(`Verifying ${transactionId} receipt and recipient balance…`);
     try {
       const verification = await verifyConnectedHolderFundingTransaction({
@@ -281,69 +480,275 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
         plan: fundingPlan,
         submission: submissions[transactionId],
       });
+      if (!vaultGeneration.current.isCurrent(verificationGeneration)) return;
       setVerifications((current) => [...current.filter((row) => row.transactionId !== transactionId), verification]);
       if (!verification.verified) throw new Error("Receipt or burner balance is not verified yet. No later transfer is unlocked.");
       setNotice(`${transactionId} verified. The next transfer may now be reviewed explicitly.`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Funding verification failed.");
+      if (vaultGeneration.current.isCurrent(verificationGeneration)) setError(err instanceof Error ? err.message : "Funding verification failed.");
+    } finally {
+      if (vaultGeneration.current.isCurrent(verificationGeneration)) setBusy(null);
+    }
+  }
+
+  async function simulateMint() {
+    resetMessages();
+    if (!holder || !executionPlan || !fundingComplete || reviewedQuantity === null || !executionCapabilities?.ready) {
+      setError("The complete bound run and every verified funding row are required before simulation.");
+      return;
+    }
+    const simulationGeneration = vaultGeneration.current.begin();
+    setBusy("Simulating the exact holder-routed mint rows…");
+    const next = [...transactions];
+    for (const [index, transaction] of next.entries()) {
+      if (transaction.status === "broadcast" || transaction.broadcastAttempted) continue;
+      const simulated = await simulatePreparedBrowserMint(transaction);
+      if (!vaultGeneration.current.isCurrent(simulationGeneration)) {
+        revokePreparedBrowserMintSigners([simulated]);
+        setBusy(null);
+        return;
+      }
+      next[index] = simulated;
+      setTransactions([...next]);
+    }
+    if (!vaultGeneration.current.isCurrent(simulationGeneration)) return;
+    setTransactions(next);
+    setBusy(null);
+    const failed = next.filter((transaction) => transaction.status === "failed").length;
+    if (failed > 0) {
+      setError(`${failed} simulation${failed === 1 ? "" : "s"} failed. No live mint consent is available. Review the error; no transaction was sent.`);
+      return;
+    }
+    setNotice("Every exact bound row simulated successfully. Review explicit final live mint consent next.");
+    setStep("mint");
+  }
+
+  function openLiveConsent() {
+    if (!executionPlan || !simulationComplete || transactions.some((transaction) => transaction.binding !== executionPlan.binding)) return;
+    setLiveConsent(false);
+    setLiveConsentBinding(executionPlan.binding);
+    setLiveConsentOpen(true);
+  }
+
+  async function broadcastMints() {
+    resetMessages();
+    if (!executionPlan || !liveConsent || liveConsentBinding !== executionPlan.binding) {
+      setError("Live mint consent no longer matches the exact simulated plan. Review it again.");
+      return;
+    }
+    const broadcastGeneration = vaultGeneration.current.begin();
+    // Close and consume the visible consent before the first await. The library also
+    // consumes signer authority synchronously so a second invocation cannot send.
+    setLiveConsentOpen(false);
+    setLiveConsent(false);
+    setLiveConsentBinding(null);
+    setBusy("Signing and broadcasting each exact row once…");
+    const next = [...transactions];
+    const nextReceipts: GuidedMintReceipt[] = [...receipts];
+    try {
+      for (const [index, transaction] of next.entries()) {
+        if (transaction.status === "broadcast" || transaction.broadcastAttempted) continue;
+        if (!vaultGeneration.current.isCurrent(broadcastGeneration)) throw new Error("Vault authority changed before this row was sent. No automatic retry was attempted.");
+        const sent = await broadcastPreparedBrowserMint(transaction, {
+          explicitConsent: true,
+          consentBinding: executionPlan.binding,
+          isAuthorityCurrent: () => vaultGeneration.current.isCurrent(broadcastGeneration),
+        });
+        next[index] = sent;
+        const receiptUpdate = sent.status === "broadcast"
+          ? createSubmittedMintReceipt(sent)
+          : {
+            transactionId: sent.id,
+            binding: sent.binding,
+            hash: sent.hash ?? "",
+            status: "Failed" as const,
+            confirmations: 0,
+            error: sent.error ?? "Browser broadcast failed before a valid transaction hash was returned.",
+          };
+        const mergedReceipts = mergeGuidedMintReceipts(nextReceipts, [receiptUpdate]);
+        nextReceipts.splice(0, nextReceipts.length, ...mergedReceipts);
+        setTransactions([...next]);
+        setReceipts([...nextReceipts]);
+        persistRecoveryEvidence({
+          plan: executionPlan,
+          transactionRows: next,
+          receiptRows: nextReceipts,
+          fundingRows: Object.values(submissions),
+        });
+        if (!vaultGeneration.current.isCurrent(broadcastGeneration)) {
+          throw new Error("Vault authority changed after submission. The captured receipt remains visible; no additional row was sent.");
+        }
+      }
+      if (next.some((transaction) => transaction.status === "failed")) {
+        setError("One or more broadcasts failed. No row is sent again automatically; review the failed state and recovery handoff.");
+      } else {
+        setNotice("Submitted once. Receipt polling now verifies confirmations and NFT mints to the holder.");
+      }
+    } catch (err) {
+      if (vaultGeneration.current.isCurrent(broadcastGeneration)) {
+        setError(err instanceof Error ? err.message : "Live broadcast stopped. Existing submissions remain tracked and no row was retried.");
+      }
+    } finally {
+      if (vaultGeneration.current.isCurrent(broadcastGeneration)) {
+        setTransactions(next);
+        setReceipts(nextReceipts);
+        setBusy(null);
+      } else {
+        setTransactions((current) => {
+          const retained = invalidateBrowserMintTransactions(next);
+          const byKey = new Map(current.map((transaction) => [`${transaction.binding}:${transaction.id}`, transaction]));
+          for (const transaction of retained) byKey.set(`${transaction.binding}:${transaction.id}`, transaction);
+          return [...byKey.values()];
+        });
+        setReceipts((current) => markGuidedMintReceiptsForReconciliation(mergeGuidedMintReceipts(current, nextReceipts)));
+      }
+      setStep(nextReceipts.length > 0 ? "receipts" : "mint");
+    }
+  }
+
+  async function pollMintReceipts() {
+    if (receiptPolling) return;
+    setReceiptPolling(true);
+    const current = receipts.map((receipt) => (
+      receipt.status === "Submitted" || receipt.status === "Unknown"
+        ? { ...receipt, status: "Confirming" as const }
+        : receipt
+    ));
+    setReceipts(current);
+    const next = [...current];
+    for (const [index, receipt] of next.entries()) {
+      if (receipt.status !== "Confirming") continue;
+      const transaction = transactions.find((candidate) => candidate.id === receipt.transactionId && candidate.binding === receipt.binding);
+      if (!transaction) {
+        next[index] = { ...receipt, status: "Failed", error: "Receipt row no longer matches the cryptographically bound submitted plan." };
+        continue;
+      }
+      next[index] = await pollPreparedBrowserMintReceipt(transaction, receipt);
+      setReceipts([...next]);
+    }
+    setReceipts(next);
+    setReceiptPolling(false);
+    if (executionPlan) persistRecoveryEvidence({
+      plan: executionPlan,
+      transactionRows: transactions,
+      receiptRows: next,
+      fundingRows: Object.values(submissions),
+    });
+    if (next.length === transactions.length && next.every((receipt) => receipt.status === "Confirmed")) {
+      setNotice("Every receipt is confirmed and every NFT recipient is verified as the Compas holder.");
+    }
+  }
+
+  async function resumeRecoveryReceipts() {
+    resetMessages();
+    if (!recoveryJournal || receiptPolling) return;
+    setReceiptPolling(true);
+    try {
+      const recoveryTransactions = rehydrateGuidedRecoveryTransactions(recoveryJournal);
+      const next: GuidedMintReceipt[] = [];
+      for (const transaction of recoveryTransactions) {
+        const existing = recoveryJournal.receipts.find((receipt) => (
+          receipt.transactionId === transaction.id &&
+          receipt.binding === transaction.binding &&
+          receipt.hash.toLowerCase() === transaction.hash?.toLowerCase()
+        ));
+        if (existing?.status === "Failed") {
+          next.push(existing);
+          continue;
+        }
+        const recoverable = existing
+          ? { ...existing, status: "Unknown" as const }
+          : createSubmittedMintReceipt(transaction);
+        next.push(await pollPreparedBrowserMintReceipt(transaction, recoverable));
+      }
+      const updated = parseGuidedHolderRecoveryJournal(JSON.stringify({
+        ...recoveryJournal,
+        updatedAt: new Date().toISOString(),
+        receipts: next,
+      }));
+      writeGuidedHolderRecoveryJournal(window.localStorage, updated);
+      setRecoveryJournal(updated);
+      setNotice("Recovery journal receipts were reconciled from chain state. No transaction was signed, sent, retried, or swept.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Recovery receipt reconciliation failed and remains retryable.");
+    } finally {
+      setReceiptPolling(false);
+    }
+  }
+
+  async function recheckRecoveryBalances() {
+    resetMessages();
+    if (!recoveryJournal) return;
+    setBusy("Rechecking exact residual burner balances on the journal chain…");
+    try {
+      const balances = await readGuidedBurnerBalances(rehydrateGuidedRecoveryBalancePlan(recoveryJournal));
+      setRecoveryBalances(balances);
+      setNotice("Residual balances were refreshed. Any nonzero burner remains blocked until a separately reviewed manual exact sweep is confirmed and its residual balance is rechecked.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Residual balance reconciliation failed.");
     } finally {
       setBusy(null);
     }
   }
 
-  async function simulateMint(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function checkBurnerBalances() {
     resetMessages();
-    if (!holder || !discovery || !fundingPlan || !fundingComplete || reviewedQuantity === null) {
-      setError("Every explicit funding row must have a verified receipt and burner balance before simulation.");
-      return;
-    }
-    setBusy("Unlocking Vault in memory and simulating holder-routed mints…");
+    if (!executionPlan) return;
+    setBusy("Checking every burner balance before finish…");
     try {
-      const raw = window.localStorage.getItem(LAUNCH_VAULT_STORAGE_KEY);
-      if (!raw) throw new Error("Canonical encrypted launch Vault is missing from this browser.");
-      const payload = await decryptLaunchVaultBackup(parseEncryptedLaunchVaultBackup(raw), simulationPassphrase);
-      const preview = buildGuidedMintSimulationPlan({
-        holder,
-        discovery,
-        vault: payload,
-        burnerAddresses: fundingPlan.transactions.map((row) => row.to),
-        quantityPerBurner: reviewedQuantity,
-        maxTotalValueWei: fundingPlan.totals.mintPriceWei,
-      });
-      const next: BrowserPreparedMint[] = [];
-      for (const transaction of preview.plan.transactions) {
-        next.push(await simulatePreparedBrowserMint(transaction));
-        setSimulations([...next]);
-      }
-      setSimulationPassphrase("");
-      const failed = next.filter((transaction) => transaction.status === "failed").length;
-      if (failed > 0) throw new Error(`${failed} simulation${failed === 1 ? "" : "s"} failed. No mint broadcast is available in this guided preview.`);
-      setNotice("All holder-routed mint simulations passed. No mint transaction was signed or broadcast.");
+      const balances = await readGuidedBurnerBalances(executionPlan);
+      setBurnerBalances(balances);
+      const hasUnknown = Object.values(balances).some((balance) => balance === null);
+      const hasFunds = Object.values(balances).some((balance) => balance !== null && balance !== BigInt(0));
+      if (hasUnknown || hasFunds) setError("Finish remains blocked. Unknown or nonzero burner balances require the manual exact sweep recovery flow.");
+      else setNotice("Every burner balance is verified at zero. Safe finish can now drop in-memory signer state.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Mint simulation failed.");
+      setError(err instanceof Error ? err.message : "Burner balance reconciliation failed.");
     } finally {
       setBusy(null);
     }
   }
+
+  function finishSafely() {
+    resetMessages();
+    if (!finishAssessment?.ready) {
+      setError("Finish is blocked until every mint is confirmed to the holder and every burner balance is verified at zero.");
+      return;
+    }
+    revokePreparedBrowserMintSigners(transactions);
+    setUnlockedVault(null);
+    setFinished(true);
+    setNotice("Finished safely. In-memory signer authority was dropped. The encrypted Vault backup and verified receipts were not wiped.");
+  }
+
+  const networkGasMaxWei = fundingPlan ? fundingPlan.totals.mintGasWei + fundingPlan.totals.sourceTransferGasWei : BigInt(0);
+  const mintNetworkGasMaxWei = executionPlan?.transactions.reduce(
+    (total, transaction) => total + (transaction.request.gasLimit ?? BigInt(0)) * (transaction.request.maxFeePerGas ?? BigInt(0)),
+    BigInt(0),
+  ) ?? BigInt(0);
 
   return (
     <section className={`${embedded ? "" : "min-h-screen bg-[var(--compas-bg-art)] p-4 sm:p-6"} text-[color:var(--compas-ink)]`}>
       <div className="mx-auto grid max-w-5xl gap-4">
         <header className="rounded-[2rem] border border-[color:var(--compas-line)] bg-[color:var(--compas-hero)] p-5 text-[color:var(--compas-hero-ink)] sm:p-7">
-          <p className="text-xs font-black uppercase tracking-[0.24em] text-[color:var(--compas-hero-muted)]">Holder mint guide · preview</p>
-          <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">One launch decision at a time.</h1>
-          <p className="mt-2 max-w-2xl text-sm font-semibold text-[color:var(--compas-hero-muted)]">Verified holder funds each burner explicitly. Mints route back to the holder and stop at simulation.</p>
+          <p className="text-xs font-black uppercase tracking-[0.24em] text-[color:var(--compas-hero-muted)]">Compas holder mint guide</p>
+          <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">Fund, mint, verify, finish.</h1>
+          <p className="mt-2 max-w-2xl text-sm font-semibold text-[color:var(--compas-hero-muted)]">One bound holder journey: exact funding, simulation, explicit live consent, real receipts, and a balance-safe finish.</p>
           <div className="mt-4 flex flex-wrap gap-2 text-[11px] font-black uppercase tracking-[0.14em]">
             <span className="rounded-full border border-[color:var(--compas-hero-line)] px-3 py-1.5">No automatic funding</span>
             <span className="rounded-full border border-[color:var(--compas-hero-line)] px-3 py-1.5">Recipient · verified holder</span>
-            <span className="rounded-full border border-[color:var(--compas-hero-line)] px-3 py-1.5">No mint broadcast</span>
+            <span className="rounded-full border border-[color:var(--compas-hero-line)] px-3 py-1.5">Explicit live consent</span>
           </div>
         </header>
 
-        <nav className="grid grid-cols-3 gap-2 sm:grid-cols-6" aria-label="Guided holder flow">
+        <div className="rounded-2xl border-2 border-[color:var(--compas-accent)] bg-[color:var(--compas-card)] p-4 sm:hidden" aria-live="polite">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[color:var(--compas-accent)]">Current step · {String(currentStepIndex + 1).padStart(2, "0")} of {GUIDED_HOLDER_STEPS.length}</p>
+          <p className="mt-1 text-xl font-black">{currentStep.label}</p>
+        </div>
+
+        <nav className="flex gap-2 overflow-x-auto pb-2 sm:grid sm:grid-cols-3 lg:grid-cols-9" aria-label="Guided holder flow">
           {GUIDED_HOLDER_STEPS.map((item, index) => {
-            const available = index <= maxReachableIndex;
+            const available = index <= maxReachableIndex || (item.id === "finish" && broadcastComplete);
             const active = step === item.id;
             return (
               <button
@@ -351,9 +756,9 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
                 type="button"
                 disabled={!available}
                 onClick={() => setStep(item.id)}
-                className={`rounded-2xl border px-3 py-3 text-left transition ${active ? "border-[color:var(--compas-accent)] bg-[color:var(--compas-accent)] text-[color:var(--compas-accent-ink)]" : "border-[color:var(--compas-line)] bg-[color:var(--compas-card)] text-[color:var(--compas-muted)]"} disabled:cursor-not-allowed disabled:opacity-40`}
+                className={`min-w-28 shrink-0 rounded-2xl border px-3 py-3 text-left transition sm:min-w-0 ${active ? "border-[color:var(--compas-accent)] bg-[color:var(--compas-accent)] text-[color:var(--compas-accent-ink)]" : "border-[color:var(--compas-line)] bg-[color:var(--compas-card)] text-[color:var(--compas-muted)]"} disabled:cursor-not-allowed disabled:opacity-40`}
               >
-                <span className="text-[10px] font-black uppercase tracking-[0.18em]">0{index + 1}</span>
+                <span className="text-[10px] font-black uppercase tracking-[0.18em]">{String(index + 1).padStart(2, "0")}</span>
                 <span className="mt-1 block text-sm font-black">{item.label}</span>
               </button>
             );
@@ -364,15 +769,38 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
         {error ? <p className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">{error}</p> : null}
         {busy ? <p className="rounded-2xl border border-violet-200 bg-violet-50 p-3 text-sm font-black text-violet-700">{busy}</p> : null}
 
+        {recoveryJournal ? (
+          <details className="rounded-2xl border-2 border-amber-300 bg-amber-50 p-4 text-amber-950">
+            <summary className="cursor-pointer text-sm font-black">Browser recovery journal · {recoveryJournal.collection.name}</summary>
+            <p className="mt-2 text-xs font-bold">Secret-free local evidence survives refresh and tab changes. It cannot sign, send, or retry transactions.</p>
+            <div className="mt-3 grid gap-2 text-xs font-bold sm:grid-cols-2">
+              <p>Chain · {recoveryJournal.chain.name} ({recoveryJournal.chain.chainId})</p>
+              <p>Collection · {recoveryJournal.collection.name} · {maskVaultAddress(recoveryJournal.collection.address)}</p>
+              <p>Verified recipient · {maskVaultAddress(recoveryJournal.recipient)}</p>
+              <p>Captured mint hashes · {recoveryJournal.mintTransactions.length}/{recoveryJournal.expectedTransactionCount}</p>
+              <p className="break-all font-mono sm:col-span-2">Plan binding · {recoveryJournal.planBinding}</p>
+            </div>
+            {recoveryJournal.fundingTransactions.length > 0 ? <div className="mt-3 grid gap-1">{recoveryJournal.fundingTransactions.map((row) => <p key={`${row.transactionId}:${row.hash}`} className="break-all font-mono text-xs font-bold">Funding · {row.transactionId} · {row.hash}</p>)}</div> : null}
+            {recoveryJournal.mintTransactions.length > 0 ? <div className="mt-3 grid gap-1">{recoveryJournal.mintTransactions.map((transaction) => { const receipt = recoveryJournal.receipts.find((candidate) => candidate.transactionId === transaction.id && candidate.hash.toLowerCase() === transaction.hash.toLowerCase()); return <p key={transaction.hash} className="break-all font-mono text-xs font-bold">Mint · {receipt?.status ?? "Submitted"} · {transaction.hash}</p>; })}</div> : null}
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <button type="button" onClick={() => void resumeRecoveryReceipts()} disabled={receiptPolling || recoveryJournal.mintTransactions.length === 0} className="rounded-xl border border-amber-700 px-4 py-2 text-xs font-black disabled:opacity-40">Resume receipt reconciliation</button>
+              <button type="button" onClick={() => void recheckRecoveryBalances()} disabled={Boolean(busy) || recoveryJournal.burnerAddresses.length === 0} className="rounded-xl border border-amber-700 px-4 py-2 text-xs font-black disabled:opacity-40">Recheck residual balances</button>
+            </div>
+            <div className="mt-4 rounded-xl border border-amber-300 bg-white p-3">
+              <p className="text-xs font-black uppercase tracking-[0.14em]">Manual exact sweep</p>
+              <p className="mt-2 text-xs font-bold">For each burner separately: re-read exact balance and nonce; bind gas limit and maximum fee; set value to balance minus that maximum gas fee; simulate only to the verified holder; consent for that burner; send sequentially; verify the receipt and then the residual balance. Never sweep or retry automatically.</p>
+              <div className="mt-2 grid gap-1">{recoveryJournal.burnerAddresses.map((address) => { const balanceKey = Object.keys(recoveryBalances).find((candidate) => candidate.toLowerCase() === address.toLowerCase()); const balance = balanceKey ? recoveryBalances[balanceKey] : undefined; return <p key={address} className="font-mono text-xs font-bold">{maskVaultAddress(address)} · {balance === undefined ? "balance not rechecked" : balance === null ? "balance unknown" : `${formatEther(balance)} ETH`}</p>; })}</div>
+              <button type="button" onClick={() => openAdvanced("Vault")} className="mt-3 w-full rounded-xl bg-amber-800 px-4 py-2 text-xs font-black text-white">Open encrypted Vault for manual recovery</button>
+            </div>
+          </details>
+        ) : null}
+
         {step === "holder" ? (
           <div className={CARD}>
             <StepHeading number="01" title="Connect verified Compas" body="The signed holder session is the funding source and final NFT recipient." />
             {holder ? (
               <div className="mt-4 flex flex-col gap-3 rounded-2xl bg-[color:var(--compas-soft)] p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="font-mono text-sm font-black">{maskVaultAddress(holder.address)}</p>
-                  <p className="mt-1 text-xs font-bold text-[color:var(--compas-muted)]">{holder.compasCount} Compas · server verified</p>
-                </div>
+                <div><p className="font-mono text-sm font-black">{maskVaultAddress(holder.address)}</p><p className="mt-1 text-xs font-bold text-[color:var(--compas-muted)]">{holder.compasCount} Compas · server verified</p></div>
                 <button type="button" onClick={() => setStep("burners")} className="rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)]">Continue</button>
               </div>
             ) : <p className="mt-4 text-sm font-bold text-[color:var(--compas-muted)]">Waiting for the holder gate. Return to login if this does not resolve.</p>}
@@ -381,24 +809,15 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
 
         {step === "burners" ? (
           <div className={CARD}>
-            <StepHeading number="02" title="Create encrypted burners" body="Use the canonical production Vault. This guide reads only its public address projection." />
+            <StepHeading number="02" title="Unlock encrypted burners" body="The canonical Vault stays encrypted at rest. This run keeps selected signers in memory so funding cannot lead to a re-entry dead end." />
             <div className="mt-4 grid gap-3 sm:grid-cols-[auto_1fr]">
-              <button type="button" onClick={() => openAdvanced("Vault")} className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] px-5 py-3 text-sm font-black">Open Vault tools</button>
+              <button type="button" onClick={() => openAdvanced("Vault")} className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] px-5 py-3 text-sm font-black">Create burners in Vault</button>
               <form onSubmit={loadCanonicalBurners} className="grid gap-2 sm:grid-cols-[1fr_auto]">
                 <input type="password" value={vaultPassphrase} onChange={(event) => setVaultPassphrase(event.target.value)} placeholder="Vault passphrase" autoComplete="current-password" className={FIELD} />
-                <button type="submit" disabled={Boolean(busy)} className="rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:opacity-50">Load burner addresses</button>
+                <button type="submit" disabled={Boolean(busy)} className="rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:opacity-50">Unlock for this run</button>
               </form>
             </div>
-            {burners.length > 0 ? (
-              <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                {burners.map((wallet) => (
-                  <label key={wallet.id} className="flex items-center gap-3 rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-3 text-sm font-bold">
-                    <input type="checkbox" checked={selectedBurnerAddresses.includes(wallet.address)} onChange={() => toggleBurner(wallet.address)} />
-                    <span className="min-w-0"><span className="block font-black">{wallet.label}</span><span className="block truncate font-mono text-xs text-[color:var(--compas-muted)]">{maskVaultAddress(wallet.address)} · {wallet.chain}</span></span>
-                  </label>
-                ))}
-              </div>
-            ) : null}
+            {burners.length > 0 ? <div className="mt-4 grid gap-2 sm:grid-cols-2">{burners.map((wallet) => <label key={wallet.id} className="flex items-center gap-3 rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-3 text-sm font-bold"><input type="checkbox" checked={selectedBurnerAddresses.includes(wallet.address)} onChange={() => toggleBurner(wallet.address)} /><span className="min-w-0"><span className="block font-black">{wallet.label}</span><span className="block truncate font-mono text-xs text-[color:var(--compas-muted)]">{maskVaultAddress(wallet.address)} · {wallet.chain}</span></span></label>)}</div> : null}
           </div>
         ) : null}
 
@@ -415,69 +834,110 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
 
         {step === "funding-review" && discovery ? (
           <div className={CARD}>
-            <StepHeading number="04" title="Review exact funding" body={`${discovery.collection.name} · ${requireExecutablePublicStage(discovery).priceEth} ETH each before gas and buffer.`} />
-            <div className="mt-4 grid gap-3 sm:grid-cols-5">
-              <NumberInput label="Quantity / burner" value={quantityPerBurner} onChange={setQuantityPerBurner} min={1} />
-              <NumberInput label="Mint gas limit" value={mintGasLimit} onChange={setMintGasLimit} min={21_000} />
-              <TextInput label="Max fee gwei" value={maxFeeGwei} onChange={setMaxFeeGwei} />
-              <TextInput label="Buffer %" value={bufferPercent} onChange={setBufferPercent} />
-              <TextInput label="Holder cap ETH" value={maxTotalEth} onChange={setMaxTotalEth} />
+            <StepHeading number="04" title="Review exact funding and complete path" body={`${discovery.collection.name} · ${requireExecutablePublicStage(discovery).priceEth} ETH per NFT. Network gas and funding buffer are separate.`} />
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="rounded-2xl border-2 border-[color:var(--compas-accent)] bg-[color:var(--compas-soft)] p-4 lg:col-span-2">
+                <TextInput label="Maximum mint value ETH" value={mintValueMaxEth} onChange={(value) => { clearBoundRun(); setMintValueMaxEth(value); }} />
+                <p className="mt-2 text-xs font-bold text-[color:var(--compas-muted)]">Hard maximum for NFT mint value only across every burner. It excludes network gas.</p>
+              </div>
+              <div className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-4">
+                <p className="text-xs font-black uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">Network gas estimate / max</p>
+                <p className="mt-2 text-lg font-black">Calculated after review</p>
+                <p className="mt-1 text-xs font-bold text-[color:var(--compas-muted)]">Uses gas limits × maximum fee. Shown separately from mint value.</p>
+              </div>
             </div>
-            <button type="button" onClick={reviewFunding} className="mt-4 w-full rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)]">Review exact funding</button>
+            <div className="mt-4 grid gap-3 sm:grid-cols-5">
+              <NumberInput label="Quantity / burner" value={quantityPerBurner} onChange={(value) => { clearBoundRun(); setQuantityPerBurner(value); }} min={1} />
+              <NumberInput label="Mint gas limit" value={mintGasLimit} onChange={(value) => { clearBoundRun(); setMintGasLimit(value); }} min={21_000} />
+              <TextInput label="Max fee gwei" value={maxFeeGwei} onChange={(value) => { clearBoundRun(); setMaxFeeGwei(value); }} />
+              <TextInput label="Buffer %" value={bufferPercent} onChange={(value) => { clearBoundRun(); setBufferPercent(value); }} />
+              <TextInput label="Holder funding authorization ceiling ETH" value={holderFundingCapEth} onChange={(value) => { clearBoundRun(); setHolderFundingCapEth(value); }} />
+            </div>
+            <button type="button" onClick={() => void reviewFunding()} disabled={Boolean(busy)} className="mt-4 w-full rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:opacity-50">Review and verify complete path</button>
           </div>
         ) : null}
 
         {step === "funding" && fundingPlan ? (
           <div className={CARD}>
-            <StepHeading number="05" title="Fund one burner at a time" body={`Holder source total ceiling: ${formatEther(fundingPlan.totals.sourceTotalWei)} ETH. No transfer is automatic.`} />
-            <button type="button" onClick={checkHolderFunding} disabled={Boolean(busy)} className="mt-4 rounded-2xl border border-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent)] disabled:opacity-50">Check connected holder</button>
-            {preflight ? <div className="mt-3 grid gap-2 sm:grid-cols-2">{preflight.checks.map((check) => <p key={check.id} className={`rounded-2xl border p-3 text-xs font-bold ${check.ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-700"}`}>{check.ok ? "✓" : "✕"} {check.label}<span className="mt-1 block font-mono font-semibold">{check.detail}</span></p>)}</div> : null}
-            <div className="mt-4 grid gap-3">
-              {fundingPlan.transactions.map((row) => {
-                const submission = submissions[row.id];
-                const verification = verifications.find((item) => item.transactionId === row.id);
-                const previousReady = fundingPlan.transactions.slice(0, row.index).every((previous) => verifications.some((item) => item.transactionId === previous.id && item.verified));
-                return (
-                  <article key={row.id} className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-4">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <div><p className="font-black">Transfer {row.index + 1} · {maskVaultAddress(row.to)}</p><p className="mt-1 font-mono text-xs text-[color:var(--compas-muted)]">{formatEther(row.fundingValueWei)} ETH + transfer gas ceiling</p></div>
-                      <span className="text-xs font-black uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">{verification?.verified ? "verified" : submission ? "receipt pending" : "not sent"}</span>
-                    </div>
-                    {!submission ? (
-                      <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
-                        <label className="flex items-start gap-2 rounded-2xl bg-[color:var(--compas-card)] p-3 text-xs font-bold"><input type="checkbox" checked={Boolean(fundingConsent[row.id])} onChange={(event) => setFundingConsent((current) => ({ ...current, [row.id]: event.target.checked }))} /><span>I reviewed this recipient and exact value. Ask my connected holder wallet to confirm this transfer only.</span></label>
-                        <button type="button" onClick={() => submitFunding(row.id)} disabled={!preflight?.ready || !previousReady || !fundingConsent[row.id] || Boolean(busy)} className="rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:cursor-not-allowed disabled:opacity-40">Confirm transfer {row.index + 1}</button>
-                      </div>
-                    ) : !verification?.verified ? (
-                      <button type="button" onClick={() => verifyFunding(row.id)} disabled={Boolean(busy)} className="mt-3 rounded-2xl border border-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent)]">Verify receipt & balance</button>
-                    ) : null}
-                  </article>
-                );
-              })}
+            <StepHeading number="05" title="Fund one burner at a time" body="Funding is enabled because this same run has the exact drop, holder recipient, mint-value maximum, in-memory signers, and receipt/balance reads." />
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <Metric label="Maximum mint value" value={`${formatEther(executionPlan?.maxTotalWei ?? BigInt(0))} ETH`} prominent />
+              <Metric label="Network gas estimate / max" value={`${formatEther(networkGasMaxWei)} ETH`} />
+              <Metric label="Funding buffer" value={`${formatEther(fundingPlan.totals.bufferWei)} ETH`} />
             </div>
-            {fundingComplete ? <button type="button" onClick={() => setStep("simulate")} className="mt-4 w-full rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)]">Continue to simulation</button> : null}
+            <p className="mt-3 text-xs font-bold text-[color:var(--compas-muted)]">Holder funding authorization ceiling: {formatEther(fundingPlan.totals.sourceTotalWei)} ETH, including burner amounts and source-transfer gas maximum. Each component remains visible above.</p>
+            {executionCapabilities ? <div className="mt-3 grid gap-2 sm:grid-cols-2">{executionCapabilities.checks.map((check) => <p key={check.id} className={`rounded-2xl border p-3 text-xs font-bold ${check.ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-700"}`}>{check.ok ? "✓" : "✕"} {check.label}<span className="mt-1 block font-mono font-semibold">{check.detail}</span></p>)}</div> : null}
+            <button type="button" onClick={() => void checkHolderFunding()} disabled={!executionCapabilities?.ready || Boolean(busy)} className="mt-4 rounded-2xl border border-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent)] disabled:opacity-50">Check connected holder</button>
+            {preflight ? <div className="mt-3 grid gap-2 sm:grid-cols-2">{preflight.checks.map((check) => <p key={check.id} className={`rounded-2xl border p-3 text-xs font-bold ${check.ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-700"}`}>{check.ok ? "✓" : "✕"} {check.label}<span className="mt-1 block font-mono font-semibold">{check.detail}</span></p>)}</div> : null}
+            <div className="mt-4 grid gap-3">{fundingPlan.transactions.map((row) => {
+              const submission = submissions[row.id];
+              const verification = verifications.find((item) => item.transactionId === row.id);
+              const previousReady = fundingPlan.transactions.slice(0, row.index).every((previous) => verifications.some((item) => item.transactionId === previous.id && item.verified));
+              return <article key={row.id} className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-4"><div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-black">Transfer {row.index + 1} · {maskVaultAddress(row.to)}</p><p className="mt-1 font-mono text-xs text-[color:var(--compas-muted)]">{formatEther(row.fundingValueWei)} ETH to burner; source transfer gas separate</p></div><span className="text-xs font-black uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">{verification?.verified ? "verified" : submission ? "receipt pending" : "not sent"}</span></div>{!submission ? <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]"><label className="flex items-start gap-2 rounded-2xl bg-[color:var(--compas-card)] p-3 text-xs font-bold"><input type="checkbox" checked={Boolean(fundingConsent[row.id])} onChange={(event) => setFundingConsent((current) => ({ ...current, [row.id]: event.target.checked }))} /><span>I reviewed this burner and exact value. Ask my holder wallet to confirm this transfer only.</span></label><button type="button" onClick={() => void submitFunding(row.id)} disabled={!preflight?.ready || !previousReady || !fundingConsent[row.id] || !executionCapabilities?.ready || Boolean(busy)} className="rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:cursor-not-allowed disabled:opacity-40">Confirm transfer {row.index + 1}</button></div> : !verification?.verified ? <button type="button" onClick={() => void verifyFunding(row.id)} disabled={Boolean(busy)} className="mt-3 rounded-2xl border border-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent)]">Verify receipt & balance</button> : null}</article>;
+            })}</div>
+            {fundingComplete ? <button type="button" onClick={() => setStep("simulate")} className="mt-4 w-full rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)]">Continue to exact simulation</button> : null}
           </div>
         ) : null}
 
         {step === "simulate" ? (
           <div className={CARD}>
-            <StepHeading number="06" title="Simulate holder-routed mints" body="Burners pay. The verified Compas holder receives every NFT. This guided surface has no mint broadcast." />
-            <form onSubmit={simulateMint} className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto]">
-              <input type="password" value={simulationPassphrase} onChange={(event) => setSimulationPassphrase(event.target.value)} placeholder="Vault passphrase" autoComplete="current-password" className={FIELD} />
-              <button type="submit" disabled={!fundingComplete || Boolean(busy)} className="rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:cursor-not-allowed disabled:opacity-40">Simulate mint</button>
-            </form>
-            {simulations.length > 0 ? <div className="mt-4 grid gap-2">{simulations.map((transaction) => <p key={transaction.id} className="rounded-2xl bg-[color:var(--compas-soft)] p-3 text-sm font-bold">{maskVaultAddress(transaction.walletAddress)} → {maskVaultAddress(transaction.recipientAddress)} · {transaction.status}{transaction.simulationGas ? ` · ${transaction.simulationGas} gas` : ""}</p>)}</div> : null}
+            <StepHeading number="06" title="Simulate the exact bound mints" body="The run reuses the signers and calldata bound before funding. There is no passphrase re-entry or independent plan." />
+            <button type="button" onClick={() => void simulateMint()} disabled={!fundingComplete || !executionPlan || Boolean(busy)} className="mt-4 w-full rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:cursor-not-allowed disabled:opacity-40">Simulate exact mint rows</button>
+            {transactions.length > 0 ? <TransactionRows transactions={transactions} receipts={receipts} /> : null}
+          </div>
+        ) : null}
+
+        {step === "mint" ? (
+          <div className={CARD}>
+            <StepHeading number="07" title="Explicit final live mint consent" body="This is the only live mint gate. It signs each exact simulated burner row once and never sends a row again automatically." />
+            <div className="mt-4 grid gap-3 sm:grid-cols-3"><Metric label="Exact rows" value={transactions.length} /><Metric label="Maximum mint value" value={`${formatEther(executionPlan?.maxTotalWei ?? BigInt(0))} ETH`} prominent /><Metric label="Verified recipient" value={holder ? maskVaultAddress(holder.address) : "missing"} /></div>
+            <TransactionRows transactions={transactions} receipts={receipts} />
+            <button type="button" onClick={openLiveConsent} disabled={!simulationComplete || Boolean(busy)} className="mt-4 w-full rounded-2xl bg-red-600 px-5 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40">Review final live mint consent</button>
+          </div>
+        ) : null}
+
+        {step === "receipts" ? (
+          <div className={CARD}>
+            <StepHeading number="08" title="Verify real mint receipts" body="Submitted → Confirming or Unknown → Confirmed or Failed. RPC errors remain retryable; only onchain reverts or bound evidence mismatches fail permanently." />
+            <div className="mt-4 flex flex-wrap gap-2 text-xs font-black"><StatusLegend status="Submitted" /><StatusLegend status="Confirming" /><StatusLegend status="Unknown" /><StatusLegend status="Confirmed" /><StatusLegend status="Failed" /></div>
+            <TransactionRows transactions={transactions} receipts={receipts} />
+            <button type="button" onClick={() => void pollMintReceipts()} disabled={receiptPolling || !receipts.some((receipt) => receipt.status === "Submitted" || receipt.status === "Confirming" || receipt.status === "Unknown")} className="mt-4 w-full rounded-2xl border border-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent)] disabled:opacity-40">{receiptPolling ? "Polling receipts…" : "Poll receipts now"}</button>
+            {confirmedReceipts.map((receipt) => <div key={receipt.transactionId} className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800"><p>Verified NFT recipient · {receipt.verifiedRecipient}</p><p className="mt-1 font-mono text-xs">Token {receipt.tokenIds?.join(", ")} · {receipt.confirmations} confirmation(s)</p></div>)}
+            <button type="button" onClick={() => setStep("finish")} disabled={!broadcastComplete} className="mt-4 w-full rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:opacity-40">Review safe finish</button>
+          </div>
+        ) : null}
+
+        {step === "finish" ? (
+          <div className={CARD}>
+            <StepHeading number="09" title="Finish without abandoning funds" body="Finish cannot drop this run while a receipt is pending, failed, or unknown, or while any burner balance is nonzero or unknown." />
+            {finished ? <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-emerald-800"><p className="text-xl font-black">Safe finish complete</p><p className="mt-2 text-sm font-bold">In-memory signers are gone. Verified receipt evidence remains visible in this session and the encrypted Vault was not wiped.</p></div> : (
+              <>
+                <button type="button" onClick={() => void checkBurnerBalances()} disabled={!executionPlan || Boolean(busy)} className="mt-4 w-full rounded-2xl border border-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent)] disabled:opacity-40">Check burner balances</button>
+                <div className="mt-4 grid gap-2">{finishAssessment?.blockers.length ? finishAssessment.blockers.map((blocker) => <p key={blocker} className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">Blocked · {blocker}</p>) : <p className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-800">Receipts and balances pass the safe finish gate.</p>}</div>
+                {finishAssessment?.recovery.required ? <div className="mt-4 rounded-2xl border-2 border-amber-300 bg-amber-50 p-4 text-amber-900"><p className="text-xs font-black uppercase tracking-[0.16em]">Manual exact sweep</p><p className="mt-2 text-sm font-bold">Recipient: verified holder {maskVaultAddress(finishAssessment.recovery.recipient)}</p><p className="mt-2 text-sm font-semibold">{finishAssessment.recovery.instruction}</p><div className="mt-3 grid gap-2">{finishAssessment.recovery.burners.map((burner) => <p key={burner.address} className="rounded-xl bg-white p-2 font-mono text-xs font-bold">{maskVaultAddress(burner.address)} · {burner.status}{burner.balanceWei !== null ? ` · ${formatEther(burner.balanceWei)} ETH` : ""}</p>)}</div><button type="button" onClick={() => openAdvanced("Vault")} className="mt-4 w-full rounded-2xl bg-amber-700 px-5 py-3 text-sm font-black text-white">Open encrypted Vault for manual recovery</button><p className="mt-2 text-xs font-bold">Nothing is sent here. Each burner requires an exact balance/nonce/gas/fee/value review, simulation, separate consent, receipt verification, and residual balance check; rotation stays blocked.</p></div> : null}
+                <button type="button" onClick={finishSafely} disabled={!finishAssessment?.ready || Boolean(busy)} className="mt-4 w-full rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:cursor-not-allowed disabled:opacity-40">Finish safely</button>
+              </>
+            )}
+          </div>
+        ) : null}
+
+        {liveConsentOpen && executionPlan && discovery ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="guided-live-consent-title">
+            <div className="max-h-[calc(100dvh-3rem)] w-full max-w-2xl overflow-y-auto overscroll-contain rounded-[2rem] border border-red-200 bg-white p-5 text-slate-950 shadow-2xl">
+              <p className="text-xs font-black uppercase tracking-[0.22em] text-red-600">Explicit final live mint consent</p>
+              <h3 id="guided-live-consent-title" className="mt-2 text-2xl font-black">Sign and send {transactions.length} exact mint row(s)?</h3>
+              <div className="mt-4 grid gap-2 rounded-2xl bg-slate-50 p-4 text-sm font-bold sm:grid-cols-2"><p>Chain · {executionPlan.chain.name} ({executionPlan.chain.chainId})</p><p>Collection · {discovery.collection.name}</p><p className="break-all font-mono text-xs sm:col-span-2">Collection address · {discovery.collection.address}</p><p>Maximum mint value · {formatEther(executionPlan.maxTotalWei ?? BigInt(0))} ETH</p><p>Maximum network gas · {formatEther(mintNetworkGasMaxWei)} ETH</p><p className="sm:col-span-2">Verified NFT recipient · {holder?.address}</p></div>
+              <TransactionRows transactions={transactions} receipts={receipts} />
+              <label className="mt-4 flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-800"><input type="checkbox" checked={liveConsent} onChange={(event) => setLiveConsent(event.target.checked)} className="mt-1" /><span>I reviewed the exact simulated plan, burner payers, named collection and address, verified holder recipient, maximum mint value, and numeric maximum network gas. Sign and broadcast these rows once now.</span></label>
+              <div className="mt-4 grid gap-2 sm:grid-cols-2"><button type="button" onClick={() => { setLiveConsentOpen(false); setLiveConsent(false); setLiveConsentBinding(null); }} className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-black">Cancel</button><button type="button" onClick={() => void broadcastMints()} disabled={!liveConsent || liveConsentBinding !== executionPlan.binding || Boolean(busy)} className="rounded-2xl bg-red-600 px-5 py-3 text-sm font-black text-white disabled:opacity-40">Broadcast exact mint rows</button></div>
+            </div>
           </div>
         ) : null}
 
         <details className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-card)] p-4">
           <summary className="cursor-pointer text-sm font-black">Advanced</summary>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button type="button" onClick={() => openAdvanced("Vault")} className="rounded-xl border border-[color:var(--compas-line)] px-4 py-2 text-xs font-black">Open Vault tools</button>
-            <button type="button" onClick={() => openAdvanced("Mints")} className="rounded-xl border border-[color:var(--compas-line)] px-4 py-2 text-xs font-black">Open CLI planner</button>
-            <button type="button" onClick={() => openAdvanced("Disperse")} className="rounded-xl border border-[color:var(--compas-line)] px-4 py-2 text-xs font-black">Open Disperse draft</button>
-          </div>
-          <p className="mt-2 text-xs font-semibold text-[color:var(--compas-muted)]">Private-key import, bulk tools, CLI exports, and generic disperse drafts stay outside the guided holder path.</p>
+          <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => openAdvanced("Vault")} className="rounded-xl border border-[color:var(--compas-line)] px-4 py-2 text-xs font-black">Open Vault tools</button><button type="button" onClick={() => openAdvanced("Mints")} className="rounded-xl border border-[color:var(--compas-line)] px-4 py-2 text-xs font-black">Open CLI planner</button><button type="button" onClick={() => openAdvanced("Disperse")} className="rounded-xl border border-[color:var(--compas-line)] px-4 py-2 text-xs font-black">Open Disperse draft</button></div>
+          <p className="mt-2 text-xs font-semibold text-[color:var(--compas-muted)]">Bulk and generic planning tools stay secondary. They do not replace the bound holder journey above.</p>
         </details>
       </div>
     </section>
@@ -488,12 +948,42 @@ function StepHeading({ number, title, body }: { number: string; title: string; b
   return <div><p className="text-xs font-black uppercase tracking-[0.22em] text-[color:var(--compas-accent)]">{number}</p><h2 className="mt-1 text-2xl font-black">{title}</h2><p className="mt-2 text-sm font-semibold text-[color:var(--compas-muted)]">{body}</p></div>;
 }
 
+function Metric({ label, value, prominent = false }: { label: string; value: string | number; prominent?: boolean }) {
+  return <div className={`rounded-2xl border p-4 ${prominent ? "border-2 border-[color:var(--compas-accent)] bg-[color:var(--compas-soft)]" : "border-[color:var(--compas-line)] bg-[color:var(--compas-soft)]"}`}><p className="text-[10px] font-black uppercase tracking-[0.16em] text-[color:var(--compas-muted)]">{label}</p><p className="mt-1 text-lg font-black">{value}</p></div>;
+}
+
+function TransactionRows({ transactions, receipts }: { transactions: BrowserPreparedMint[]; receipts: GuidedMintReceipt[] }) {
+  return <div className="mt-4 grid gap-2">{transactions.map((transaction) => {
+    const receipt = receipts.find((candidate) => candidate.transactionId === transaction.id && candidate.binding === transaction.binding);
+    return <article key={`${transaction.binding}:${transaction.id}`} className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-3 text-sm font-bold"><div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><p>{transaction.walletAlias} · {maskVaultAddress(transaction.walletAddress)} → {maskVaultAddress(transaction.recipientAddress)}</p><span className="text-xs font-black uppercase tracking-[0.12em]">{receipt?.status ?? transaction.status}</span></div><p className="mt-1 font-mono text-xs text-[color:var(--compas-muted)]">{formatEther(transaction.request.value)} ETH mint value{transaction.simulationGas ? ` · ${transaction.simulationGas} simulated gas` : ""}</p>{transaction.explorerUrl ? <a href={transaction.explorerUrl} target="_blank" rel="noreferrer" className="mt-1 block break-all text-xs font-black text-[color:var(--compas-accent)]">{transaction.hash}</a> : null}{receipt?.error || transaction.error ? <p className="mt-2 text-xs font-bold text-red-700">{receipt?.error ?? transaction.error}</p> : null}</article>;
+  })}</div>;
+}
+
+function StatusLegend({ status }: { status: GuidedMintReceipt["status"] }) {
+  return <span className="rounded-full border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] px-3 py-1.5">{status}</span>;
+}
+
 function NumberInput({ label, value, onChange, min }: { label: string; value: number; onChange: (value: number) => void; min: number }) {
   return <label className="text-xs font-black uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">{label}<input type="number" min={min} value={value} onChange={(event) => onChange(Number(event.target.value))} className={`${FIELD} mt-2 normal-case tracking-normal`} /></label>;
 }
 
 function TextInput({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
   return <label className="text-xs font-black uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">{label}<input inputMode="decimal" value={value} onChange={(event) => onChange(event.target.value)} className={`${FIELD} mt-2 normal-case tracking-normal`} /></label>;
+}
+
+function authorityCheckedFundingProvider(provider: Eip1193Provider, isCurrent: () => boolean): Eip1193Provider {
+  return {
+    async request(args) {
+      if (!isCurrent()) throw new Error("Vault authority changed before funding. Review funding again; no transaction was sent.");
+      const result = await provider.request(args);
+      // A wallet may return a transaction hash after the Vault changes while its prompt is
+      // open. Preserve that hash for reconciliation; all read-only awaits still fail stale.
+      if (args.method !== "eth_sendTransaction" && !isCurrent()) {
+        throw new Error("Vault authority changed during funding preflight. Review funding again; no transaction was sent.");
+      }
+      return result;
+    },
+  };
 }
 
 function getBrowserProvider(): Eip1193Provider {

@@ -45,3 +45,26 @@ test("session cookie validates holder fields and expiry", () => {
   assert.equal(readSessionCookie(token, now + 1_500), null);
   assert.equal(readSessionCookie(`${token}x`, now), null);
 });
+
+test("production authentication fails closed when no signing secret is configured", () => {
+  const env = process.env as Record<string, string | undefined>;
+  const previous = {
+    nodeEnv: env.NODE_ENV,
+    compas: env.COMPAS_GATE_SECRET,
+    nextauth: env.NEXTAUTH_SECRET,
+    auth: env.AUTH_SECRET,
+  };
+  try {
+    env.NODE_ENV = "production";
+    delete env.COMPAS_GATE_SECRET;
+    delete env.NEXTAUTH_SECRET;
+    delete env.AUTH_SECRET;
+    assert.throws(() => createNonceToken(1), /COMPAS_GATE_SECRET is required in production/i);
+    assert.equal(decodeSignedPayload("Zm9yZ2Vk.Zm9yZ2Vk"), null);
+  } finally {
+    if (previous.nodeEnv === undefined) delete env.NODE_ENV; else env.NODE_ENV = previous.nodeEnv;
+    if (previous.compas === undefined) delete env.COMPAS_GATE_SECRET; else env.COMPAS_GATE_SECRET = previous.compas;
+    if (previous.nextauth === undefined) delete env.NEXTAUTH_SECRET; else env.NEXTAUTH_SECRET = previous.nextauth;
+    if (previous.auth === undefined) delete env.AUTH_SECRET; else env.AUTH_SECRET = previous.auth;
+  }
+});

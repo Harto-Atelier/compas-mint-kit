@@ -21,8 +21,12 @@ export type NoncePayload = {
   expiresAt: number;
 };
 
-function secret(): string {
-  return process.env.COMPAS_GATE_SECRET || process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET || DEFAULT_SECRET;
+function secret(): string | null {
+  const configured = [process.env.COMPAS_GATE_SECRET, process.env.NEXTAUTH_SECRET, process.env.AUTH_SECRET]
+    .map((value) => value?.trim())
+    .find((value): value is string => Boolean(value));
+  if (configured) return configured;
+  return process.env.NODE_ENV === "production" ? null : DEFAULT_SECRET;
 }
 
 export function base64UrlEncode(value: string): string {
@@ -33,8 +37,9 @@ export function base64UrlDecode(value: string): string {
   return Buffer.from(value, "base64url").toString("utf8");
 }
 
-function sign(value: string): string {
-  return createHmac("sha256", secret()).update(value).digest("base64url");
+function sign(value: string): string | null {
+  const signingSecret = secret();
+  return signingSecret ? createHmac("sha256", signingSecret).update(value).digest("base64url") : null;
 }
 
 function safeEqual(a: string, b: string): boolean {
@@ -45,14 +50,17 @@ function safeEqual(a: string, b: string): boolean {
 
 export function encodeSignedPayload(payload: object): string {
   const body = base64UrlEncode(JSON.stringify(payload));
-  return `${body}.${sign(body)}`;
+  const signature = sign(body);
+  if (!signature) throw new Error("COMPAS_GATE_SECRET is required in production.");
+  return `${body}.${signature}`;
 }
 
 export function decodeSignedPayload<T>(token: string | undefined | null): T | null {
   if (!token) return null;
   const [body, signature, extra] = token.split(".");
   if (!body || !signature || extra !== undefined) return null;
-  if (!safeEqual(sign(body), signature)) return null;
+  const expectedSignature = sign(body);
+  if (!expectedSignature || !safeEqual(expectedSignature, signature)) return null;
   try {
     return JSON.parse(base64UrlDecode(body)) as T;
   } catch {

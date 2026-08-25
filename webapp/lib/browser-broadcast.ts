@@ -1,4 +1,4 @@
-import { Interface, JsonRpcProvider, Wallet, formatEther, parseEther } from "ethers";
+import { Interface, JsonRpcProvider, Wallet, formatEther, id, parseEther } from "ethers";
 
 export type BrowserBroadcastChainKey = "ethereum" | "base" | "robinhood";
 export type BrowserMintStatus = "prepared" | "simulated" | "broadcast" | "failed";
@@ -40,6 +40,8 @@ export interface BrowserMintPlanInput {
   customRecipientAddress?: string | null;
   maxTotalEth?: number;
   maxTotalValueWei?: bigint;
+  gasLimit?: bigint;
+  maxFeePerGasWei?: bigint;
 }
 
 export interface BrowserChainConfig {
@@ -58,6 +60,8 @@ export interface BrowserPreparedMintRequest {
   to: string;
   data: string;
   value: bigint;
+  gasLimit?: bigint;
+  maxFeePerGas?: bigint;
 }
 
 export interface BrowserPreparedMint {
@@ -159,6 +163,34 @@ export interface BrowserWalletLike {
   sendTransaction(request: BrowserPreparedMintRequest): Promise<{ hash: string }>;
 }
 
+export type GuidedMintReceiptStatus = "Submitted" | "Confirming" | "Unknown" | "Confirmed" | "Failed";
+
+export interface GuidedMintReceipt {
+  transactionId: string;
+  binding: string;
+  hash: string;
+  status: GuidedMintReceiptStatus;
+  confirmations: number;
+  verifiedRecipient?: string;
+  tokenIds?: string[];
+  error?: string;
+}
+
+export interface BrowserTransactionReceiptLike {
+  status: number | bigint | string;
+  blockNumber: number;
+  hash?: string;
+  transactionHash?: string;
+  logs: Array<{ address: string; topics: readonly string[]; data?: string }>;
+}
+
+export interface BrowserReceiptProviderLike {
+  getNetwork(): Promise<{ chainId: bigint | number }>;
+  getTransactionReceipt(hash: string): Promise<BrowserTransactionReceiptLike | null>;
+  getBlockNumber(): Promise<number>;
+  getBalance(address: string): Promise<bigint>;
+}
+
 const OPENSEA_SEADROP_ADDRESS = "0x00005EA00Ac477B1030CE78506496e8C2dE24bf5";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 interface BrowserPreparedMintContext {
@@ -168,11 +200,16 @@ interface BrowserPreparedMintContext {
   target: string;
   feeRecipient: string;
   value: bigint;
+  gasLimit?: bigint;
+  maxFeePerGas?: bigint;
+  broadcasting?: boolean;
 }
 const TX_CONTEXT = new WeakMap<BrowserPreparedMint, BrowserPreparedMintContext>();
 const IFACE = new Interface([
   "function mintPublic(address nftContract, address feeRecipient, address minterIfNotPayer, uint256 quantity) payable",
 ]);
+const ERC721_TRANSFER_TOPIC = id("Transfer(address,address,uint256)").toLowerCase();
+const ZERO_ADDRESS_TOPIC = `0x${"0".repeat(64)}`;
 
 const CHAIN_ALIASES: Record<string, BrowserBroadcastChainKey> = {
   eth: "ethereum",
@@ -280,7 +317,16 @@ export function buildBrowserMintPlan(input: BrowserMintPlanInput): BrowserMintPl
   if (maxTotalWei !== undefined && totalValueWei > maxTotalWei) {
     throw new Error(`Aggregate mint value ${formatEther(totalValueWei)} ETH exceeds the configured ${formatEther(maxTotalWei)} ETH cap (network gas excluded).`);
   }
-  const binding = JSON.stringify({
+  if ((input.gasLimit === undefined) !== (input.maxFeePerGasWei === undefined)) {
+    throw new Error("Mint gas limit and maximum fee per gas must be configured together.");
+  }
+  if (input.gasLimit !== undefined && (typeof input.gasLimit !== "bigint" || input.gasLimit <= BigInt(0))) {
+    throw new Error("Mint gas limit must be a positive bigint.");
+  }
+  if (input.maxFeePerGasWei !== undefined && (typeof input.maxFeePerGasWei !== "bigint" || input.maxFeePerGasWei <= BigInt(0))) {
+    throw new Error("Maximum fee per gas must be a positive bigint wei amount.");
+  }
+  const binding = id(JSON.stringify({
     chainKey: chain.key,
     chainId: chain.chainId,
     rpcUrl: chain.rpcUrl,
@@ -291,13 +337,15 @@ export function buildBrowserMintPlan(input: BrowserMintPlanInput): BrowserMintPl
     walletCount: wallets.length,
     walletAddresses: wallets.map((wallet) => wallet.address.toLowerCase()),
     maxTotalWei: maxTotalWei?.toString() ?? null,
+    gasLimit: input.gasLimit?.toString() ?? null,
+    maxFeePerGasWei: input.maxFeePerGasWei?.toString() ?? null,
     stages: executableStages.map((stage) => ({
       id: stage.id,
       quantity: stage.quantity,
       priceEth: stage.priceEth,
       feeRecipient: stage.feeRecipient!.toLowerCase(),
     })),
-  });
+  }));
 
   for (const [walletIndex, wallet] of wallets.entries()) {
     for (const stage of executableStages) {
@@ -306,6 +354,8 @@ export function buildBrowserMintPlan(input: BrowserMintPlanInput): BrowserMintPl
         to: chain.seaDropAddress,
         data: IFACE.encodeFunctionData("mintPublic", [input.collectionAddress, stage.feeRecipient, recipientAddress, BigInt(stage.quantity)]),
         value: parseEther(stage.priceEth || "0") * BigInt(stage.quantity),
+        gasLimit: input.gasLimit,
+        maxFeePerGas: input.maxFeePerGasWei,
       };
       const prepared: BrowserPreparedMint = makeSerializablePreparedMint({
         id: `${wallet.alias || `wallet-${walletIndex + 1}`}-${stage.id}-${walletIndex}`,
@@ -329,6 +379,8 @@ export function buildBrowserMintPlan(input: BrowserMintPlanInput): BrowserMintPl
         target: chain.seaDropAddress,
         feeRecipient: stage.feeRecipient!,
         value: request.value,
+        gasLimit: request.gasLimit,
+        maxFeePerGas: request.maxFeePerGas,
       });
       transactions.push(prepared);
     }
@@ -382,6 +434,8 @@ export function reviewPreparedBrowserMintCalldata(tx: BrowserPreparedMint, expec
       { id: "holder", label: "Verified holder recipient", ok: tx.recipientMode !== "holder" || Boolean(expected?.holderRecipientAddress && tx.recipientAddress.toLowerCase() === expected.holderRecipientAddress.toLowerCase()), value: tx.recipientAddress },
       { id: "quantity", label: "Quantity within policy", ok: !expected?.maxQuantity || Number(quantity) <= expected.maxQuantity, value: quantity },
       { id: "value", label: "Transaction value matches", ok: Boolean(context && tx.request.value === context.value), value: tx.request.value.toString() },
+      { id: "gas-limit", label: "Gas limit matches", ok: Boolean(context && tx.request.gasLimit === context.gasLimit), value: tx.request.gasLimit?.toString() ?? "provider-estimated" },
+      { id: "max-fee", label: "Maximum fee per gas matches", ok: Boolean(context && tx.request.maxFeePerGas === context.maxFeePerGas), value: tx.request.maxFeePerGas?.toString() ?? "provider-estimated" },
       { id: "status", label: "Simulation passed", ok: tx.status === "simulated", value: tx.status },
     ];
     return { functionName: "mintPublic", nftContract, feeRecipient, minterIfNotPayer, quantity, checks, readyForBroadcast: checks.every((check) => check.ok) };
@@ -414,6 +468,7 @@ export async function broadcastPreparedBrowserMint(
     consentBinding?: string;
     makeWallet?: (privateKey: string, provider: unknown) => BrowserWalletLike;
     provider?: unknown;
+    isAuthorityCurrent?: () => boolean;
   },
 ): Promise<BrowserPreparedMint> {
   if (tx.status !== "simulated") throw new Error("Dry-run/simulate before broadcast.");
@@ -421,35 +476,180 @@ export async function broadcastPreparedBrowserMint(
 
   const context = TX_CONTEXT.get(tx);
   if (!context || context.revoked) throw new Error("Unlocked private key is no longer available in memory. Re-unlock the vault.");
+  if (context.broadcasting) throw new Error("This exact mint row is already being broadcast. No duplicate send was started.");
   if (deps.consentBinding !== context.binding || tx.binding !== context.binding) {
     throw new Error("Explicit confirmation does not match the current transaction plan. Review and confirm again.");
   }
-  if (!reviewPreparedBrowserMintCalldata(tx).readyForBroadcast) {
+  if (!reviewPreparedBrowserMintCalldata(tx, {
+    holderRecipientAddress: tx.recipientMode === "holder" ? tx.recipientAddress : undefined,
+  }).readyForBroadcast) {
     throw new Error("Prepared transaction request no longer matches the simulated mint. Prepare and simulate again.");
   }
 
+  context.broadcasting = true;
   const provider = deps.provider ?? new JsonRpcProvider(tx.rpcUrl);
-  const network = await (provider as { getNetwork(): Promise<{ chainId: bigint | number }> }).getNetwork();
-  if (BigInt(network.chainId) !== BigInt(tx.chain.chainId)) {
-    throw new Error(`RPC chain ID ${network.chainId.toString()} does not match expected ${tx.chain.chainId}.`);
-  }
-  const wallet = deps.makeWallet ? deps.makeWallet(context.privateKey, provider) : (new Wallet(context.privateKey, provider as JsonRpcProvider) as unknown as BrowserWalletLike);
   try {
-    const response = await wallet.sendTransaction(tx.request);
-    const broadcasted = copyWithPrivateKey(tx, {
-      status: "broadcast",
-      hash: response.hash,
-      explorerUrl: explorerTxUrl(tx.chain.key, response.hash),
-      error: undefined,
-      broadcastAttempted: true,
-    });
-    revokePreparedBrowserMintSigners([tx, broadcasted]);
-    return broadcasted;
+    const network = await (provider as { getNetwork(): Promise<{ chainId: bigint | number }> }).getNetwork();
+    if (BigInt(network.chainId) !== BigInt(tx.chain.chainId)) {
+      throw new Error(`RPC chain ID ${network.chainId.toString()} does not match expected ${tx.chain.chainId}.`);
+    }
+    if (context.revoked || TX_CONTEXT.get(tx) !== context || deps.isAuthorityCurrent?.() === false) {
+      throw new Error("Unlocked private key authority changed before broadcast. Re-unlock, prepare, and simulate again.");
+    }
+
+    // Consume signer authority synchronously before invoking any wallet/provider code. A
+    // second click or concurrent call can never reach sendTransaction for this row.
+    const privateKey = context.privateKey;
+    context.revoked = true;
+    TX_CONTEXT.delete(tx);
+    try {
+      const wallet = deps.makeWallet ? deps.makeWallet(privateKey, provider) : (new Wallet(privateKey, provider as JsonRpcProvider) as unknown as BrowserWalletLike);
+      if (deps.isAuthorityCurrent?.() === false) {
+        throw new Error("Unlocked private key authority changed before broadcast. No transaction was sent.");
+      }
+      const response = await wallet.sendTransaction(tx.request);
+      if (!/^0x[0-9a-fA-F]{64}$/.test(response.hash)) {
+        throw new Error("Wallet broadcast did not return a valid transaction hash. Treat this row as failed and recover manually; do not retry automatically.");
+      }
+      return makeSerializablePreparedMint({
+        ...tx,
+        status: "broadcast",
+        hash: response.hash,
+        explorerUrl: explorerTxUrl(tx.chain.key, response.hash),
+        error: undefined,
+        broadcastAttempted: true,
+      });
+    } catch (error) {
+      return makeSerializablePreparedMint({ ...tx, status: "failed", error: safeMessageOf(error), broadcastAttempted: true });
+    }
   } catch (error) {
-    const failed = copyWithPrivateKey(tx, { status: "failed", error: safeMessageOf(error), broadcastAttempted: true });
-    revokePreparedBrowserMintSigners([tx, failed]);
-    return failed;
+    if (!context.revoked && TX_CONTEXT.get(tx) === context) context.broadcasting = false;
+    throw error;
   }
+}
+
+export function createSubmittedMintReceipt(tx: BrowserPreparedMint): GuidedMintReceipt {
+  if (tx.status !== "broadcast" || !tx.hash || !/^0x[0-9a-fA-F]{64}$/.test(tx.hash)) {
+    throw new Error("A valid submitted browser mint hash is required before receipt tracking.");
+  }
+  return {
+    transactionId: tx.id,
+    binding: tx.binding,
+    hash: tx.hash,
+    status: "Submitted",
+    confirmations: 0,
+  };
+}
+
+export async function pollPreparedBrowserMintReceipt(
+  tx: BrowserPreparedMint,
+  current: GuidedMintReceipt,
+  provider?: BrowserReceiptProviderLike,
+  minimumConfirmations = 1,
+): Promise<GuidedMintReceipt> {
+  if (
+    tx.status !== "broadcast" ||
+    !tx.hash ||
+    current.transactionId !== tx.id ||
+    current.binding !== tx.binding ||
+    current.hash.toLowerCase() !== tx.hash.toLowerCase()
+  ) {
+    return failedReceipt(current, "Receipt tracker does not match the exact submitted mint plan.");
+  }
+  if (current.status === "Confirmed" || current.status === "Failed") return current;
+  const requiredConfirmations = Math.max(1, Math.floor(minimumConfirmations));
+  const rpc = provider ?? (new JsonRpcProvider(tx.rpcUrl) as unknown as BrowserReceiptProviderLike);
+  try {
+    const network = await rpc.getNetwork();
+    if (BigInt(network.chainId) !== BigInt(tx.chain.chainId)) {
+      throw new Error(`Receipt RPC chain ID ${network.chainId.toString()} does not match expected ${tx.chain.chainId}.`);
+    }
+    const receipt = await rpc.getTransactionReceipt(tx.hash);
+    if (!receipt) return { ...current, status: "Confirming", confirmations: 0, error: undefined };
+
+    const receiptHash = receipt.hash ?? receipt.transactionHash;
+    if (receiptHash && receiptHash.toLowerCase() !== tx.hash.toLowerCase()) {
+      return failedReceipt(current, "Receipt hash does not match the submitted mint transaction.");
+    }
+    const succeeded = receipt.status === 1 || receipt.status === BigInt(1) || receipt.status === "0x1";
+    const reverted = receipt.status === 0 || receipt.status === BigInt(0) || receipt.status === "0x0";
+    if (reverted) return failedReceipt(current, "Mint transaction receipt reports a reverted or failed transaction.");
+    if (!succeeded) return unknownReceipt(current, "Receipt status is not yet a canonical success or revert value. Re-poll without rebroadcasting.");
+    if (!Number.isSafeInteger(receipt.blockNumber) || receipt.blockNumber < 0) {
+      return unknownReceipt(current, "Receipt block number is malformed. Re-poll without rebroadcasting.");
+    }
+
+    const latestBlock = await rpc.getBlockNumber();
+    const confirmations = Math.max(0, latestBlock - receipt.blockNumber + 1);
+    if (confirmations < requiredConfirmations) {
+      return { ...current, status: "Confirming", confirmations, error: undefined };
+    }
+
+    const review = reviewPreparedBrowserMintCalldata(tx, {
+      holderRecipientAddress: tx.recipientMode === "holder" ? tx.recipientAddress : undefined,
+    });
+    const collectionAddress = review.nftContract;
+    if (!collectionAddress || tx.recipientMode !== "holder") {
+      return failedReceipt(current, "Confirmed receipt cannot verify the bound holder recipient.", confirmations);
+    }
+    const recipientTopic = addressLogTopic(tx.recipientAddress);
+    const tokenIds = receipt.logs
+      .filter((log) => (
+        log.address.toLowerCase() === collectionAddress.toLowerCase() &&
+        log.topics.length >= 4 &&
+        log.topics[0].toLowerCase() === ERC721_TRANSFER_TOPIC &&
+        log.topics[1].toLowerCase() === ZERO_ADDRESS_TOPIC &&
+        log.topics[2].toLowerCase() === recipientTopic
+      ))
+      .map((log) => BigInt(log.topics[3]).toString());
+    if (tokenIds.length < tx.quantity) {
+      return failedReceipt(current, "Receipt succeeded but no verified NFT transfer to the bound holder recipient was found.", confirmations);
+    }
+    return {
+      ...current,
+      status: "Confirmed",
+      confirmations,
+      verifiedRecipient: tx.recipientAddress,
+      tokenIds: tokenIds.slice(0, tx.quantity),
+      error: undefined,
+    };
+  } catch (error) {
+    return unknownReceipt(current, safeMessageOf(error));
+  }
+}
+
+export function mergeGuidedMintReceipts(
+  current: readonly GuidedMintReceipt[],
+  updates: readonly GuidedMintReceipt[],
+): GuidedMintReceipt[] {
+  const merged = [...current];
+  for (const update of updates) {
+    const index = merged.findIndex((receipt) => (
+      receipt.transactionId === update.transactionId &&
+      receipt.binding === update.binding &&
+      receipt.hash.toLowerCase() === update.hash.toLowerCase()
+    ));
+    if (index >= 0) merged[index] = update;
+    else merged.push(update);
+  }
+  return merged;
+}
+
+export function markGuidedMintReceiptsForReconciliation(
+  receipts: readonly GuidedMintReceipt[],
+): GuidedMintReceipt[] {
+  return receipts.map((receipt) => receipt.status === "Failed" ? receipt : {
+    ...receipt,
+    status: "Unknown",
+    verifiedRecipient: undefined,
+    tokenIds: undefined,
+    error: "Vault authority changed. Re-poll this submitted hash for receipt reconciliation; never rebroadcast it automatically.",
+  });
+}
+
+export function hasPreparedBrowserMintSigner(transaction: BrowserPreparedMint): boolean {
+  const context = TX_CONTEXT.get(transaction);
+  return Boolean(context && !context.revoked && context.binding === transaction.binding);
 }
 
 export function revokePreparedBrowserMintSigners(transactions: readonly BrowserPreparedMint[]): void {
@@ -552,6 +752,8 @@ function makeSerializablePreparedMint(tx: BrowserPreparedMint): BrowserPreparedM
         request: {
           ...tx.request,
           value: tx.request.value.toString(),
+          gasLimit: tx.request.gasLimit?.toString(),
+          maxFeePerGas: tx.request.maxFeePerGas?.toString(),
         },
       };
     },
@@ -580,4 +782,16 @@ function clampInteger(value: number, min: number, max: number): number {
 
 function formatGwei(value: number): string {
   return value.toFixed(value >= 1 ? 2 : 4).replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
+}
+
+function failedReceipt(current: GuidedMintReceipt, error: string, confirmations = current.confirmations): GuidedMintReceipt {
+  return { ...current, status: "Failed", confirmations, verifiedRecipient: undefined, tokenIds: undefined, error };
+}
+
+function unknownReceipt(current: GuidedMintReceipt, error: string): GuidedMintReceipt {
+  return { ...current, status: "Unknown", verifiedRecipient: undefined, tokenIds: undefined, error };
+}
+
+function addressLogTopic(address: string): string {
+  return `0x${address.slice(2).toLowerCase().padStart(64, "0")}`;
 }

@@ -10,6 +10,8 @@ import {
   explorerTxUrl,
   invalidateBrowserMintTransactions,
   isTerminalBrowserMint,
+  markGuidedMintReceiptsForReconciliation,
+  mergeGuidedMintReceipts,
   revokePreparedBrowserMintSigners,
   reviewPreparedBrowserMintCalldata,
   simulatePreparedBrowserMint,
@@ -108,6 +110,10 @@ test("plan binding changes for every execution-defining input", () => {
 
   for (const changed of changedBindings) assert.notEqual(changed, original);
   assert.equal(original.includes(PRIVATE_KEY.slice(2)), false);
+  const credentialedRpc = "https://rpc-user:super-secret@example.test/rpc";
+  const opaque = buildBrowserMintPlan({ ...baseInput, rpcUrl: credentialedRpc }).binding;
+  assert.equal(opaque.includes("super-secret"), false);
+  assert.match(opaque, /^0x[0-9a-f]{64}$/i);
 });
 
 test("browser mint plan enforces an aggregate transaction-value cap", () => {
@@ -272,6 +278,45 @@ test("dropping unlocked keys revokes every prepared signer reference", async () 
   );
 });
 
+test("Vault invalidation while the broadcast RPC preflight is pending prevents signing and sending", async () => {
+  const plan = buildBrowserMintPlan({
+    chainKey: "base",
+    collectionAddress: COLLECTION,
+    stages: [publicStage],
+    walletCount: 1,
+    vault: unlockedVault,
+    recipientMode: "payer",
+  });
+  const simulated = await simulatePreparedBrowserMint(plan.transactions[0], {
+    getNetwork: async () => ({ chainId: BigInt(8453) }),
+    call: async () => "0x",
+    estimateGas: async () => BigInt(123456),
+  });
+  let releaseNetwork!: (value: { chainId: bigint }) => void;
+  const pendingNetwork = new Promise<{ chainId: bigint }>((resolve) => { releaseNetwork = resolve; });
+  let sendCalls = 0;
+  let authorityCurrent = true;
+
+  const pendingBroadcast = broadcastPreparedBrowserMint(simulated, {
+    explicitConsent: true,
+    consentBinding: simulated.binding,
+    provider: { getNetwork: () => pendingNetwork },
+    isAuthorityCurrent: () => authorityCurrent,
+    makeWallet: () => ({
+      sendTransaction: async () => {
+        sendCalls += 1;
+        return { hash: `0x${"a".repeat(64)}` };
+      },
+    }),
+  });
+  authorityCurrent = false;
+  revokePreparedBrowserMintSigners([simulated]);
+  releaseNetwork({ chainId: BigInt(8453) });
+
+  await assert.rejects(pendingBroadcast, /authority changed/i);
+  assert.equal(sendCalls, 0);
+});
+
 test("execution-input invalidation revokes stale signers while preserving terminal rows", async () => {
   const plan = buildBrowserMintPlan({
     chainKey: "base",
@@ -393,6 +438,104 @@ test("a failed broadcast attempt is terminal, revokes signer authority, and is r
     /private key is no longer available/i,
   );
   assert.equal(sendCalls, 1);
+});
+
+test("reviewed mint gas controls are bound into simulation and the exact wallet request", async () => {
+  const plan = buildBrowserMintPlan({
+    chainKey: "base",
+    collectionAddress: COLLECTION,
+    stages: [publicStage],
+    walletCount: 1,
+    vault: unlockedVault,
+    recipientMode: "payer",
+    gasLimit: BigInt(180_000),
+    maxFeePerGasWei: BigInt(2_000_000_000),
+  });
+  assert.equal(plan.transactions[0].request.gasLimit, BigInt(180_000));
+  assert.equal(plan.transactions[0].request.maxFeePerGas, BigInt(2_000_000_000));
+
+  const simulated = await simulatePreparedBrowserMint(plan.transactions[0], {
+    getNetwork: async () => ({ chainId: BigInt(8453) }),
+    call: async () => "0x",
+    estimateGas: async () => BigInt(170_000),
+  });
+  let sentRequest: typeof simulated.request | null = null;
+  const sent = await broadcastPreparedBrowserMint(simulated, {
+    explicitConsent: true,
+    consentBinding: simulated.binding,
+    provider: { getNetwork: async () => ({ chainId: BigInt(8453) }) },
+    makeWallet: () => ({ sendTransaction: async (request) => {
+      sentRequest = request;
+      return { hash: `0x${"c".repeat(64)}` };
+    } }),
+  });
+
+  assert.equal(sent.status, "broadcast");
+  assert.ok(sentRequest);
+  const capturedRequest = sentRequest as typeof simulated.request;
+  assert.equal(capturedRequest.gasLimit, BigInt(180_000));
+  assert.equal(capturedRequest.maxFeePerGas, BigInt(2_000_000_000));
+});
+
+test("concurrent live broadcast attempts consume one signer authority before the first send", async () => {
+  const plan = buildBrowserMintPlan({
+    chainKey: "base",
+    collectionAddress: COLLECTION,
+    stages: [publicStage],
+    walletCount: 1,
+    vault: unlockedVault,
+    recipientMode: "payer",
+  });
+  const simulated = await simulatePreparedBrowserMint(plan.transactions[0], {
+    getNetwork: async () => ({ chainId: BigInt(8453) }),
+    call: async () => "0x",
+    estimateGas: async () => BigInt(123456),
+  });
+  let releaseNetwork!: (value: { chainId: bigint }) => void;
+  const pendingNetwork = new Promise<{ chainId: bigint }>((resolve) => { releaseNetwork = resolve; });
+  let sendCalls = 0;
+  const options = {
+    explicitConsent: true,
+    consentBinding: simulated.binding,
+    provider: { getNetwork: () => pendingNetwork },
+    makeWallet: () => ({ sendTransaction: async () => {
+      sendCalls += 1;
+      return { hash: `0x${"d".repeat(64)}` };
+    } }),
+  };
+
+  const first = broadcastPreparedBrowserMint(simulated, options);
+  await assert.rejects(() => broadcastPreparedBrowserMint(simulated, options), /already being broadcast|no longer available/i);
+  releaseNetwork({ chainId: BigInt(8453) });
+  assert.equal((await first).status, "broadcast");
+  assert.equal(sendCalls, 1);
+});
+
+test("an invalid wallet response hash becomes a terminal failed row instead of losing receipt tracking", async () => {
+  const plan = buildBrowserMintPlan({
+    chainKey: "base",
+    collectionAddress: COLLECTION,
+    stages: [publicStage],
+    walletCount: 1,
+    vault: unlockedVault,
+    recipientMode: "payer",
+  });
+  const simulated = await simulatePreparedBrowserMint(plan.transactions[0], {
+    getNetwork: async () => ({ chainId: BigInt(8453) }),
+    call: async () => "0x",
+    estimateGas: async () => BigInt(123456),
+  });
+  const failed = await broadcastPreparedBrowserMint(simulated, {
+    explicitConsent: true,
+    consentBinding: simulated.binding,
+    provider: { getNetwork: async () => ({ chainId: BigInt(8453) }) },
+    makeWallet: () => ({ sendTransaction: async () => ({ hash: "not-a-transaction-hash" }) }),
+  });
+
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.broadcastAttempted, true);
+  assert.match(failed.error ?? "", /valid transaction hash/i);
+  assert.equal(isTerminalBrowserMint(failed), true);
 });
 
 test("simulation fails closed when the RPC reports a different chain id", async () => {
@@ -666,4 +809,37 @@ test("broadcast rechecks the live RPC chain id immediately before signing", asyn
     /RPC chain ID 1.*expected 8453/i,
   );
   assert.equal(signerCalls, 0);
+});
+
+test("partial-batch receipt updates preserve every previously captured hash", () => {
+  const first = {
+    transactionId: "row-1",
+    binding: "bound-plan",
+    hash: `0x${"a".repeat(64)}`,
+    status: "Submitted" as const,
+    confirmations: 0,
+  };
+  const second = {
+    transactionId: "row-2",
+    binding: "bound-plan",
+    hash: `0x${"b".repeat(64)}`,
+    status: "Submitted" as const,
+    confirmations: 0,
+  };
+  const reconciled = mergeGuidedMintReceipts([first], [second]);
+  assert.deepEqual(reconciled.map((receipt) => receipt.hash), [first.hash, second.hash]);
+});
+
+test("Vault invalidation keeps submitted receipt evidence but marks it for reconciliation", () => {
+  const submitted = {
+    transactionId: "row-1",
+    binding: "bound-plan",
+    hash: `0x${"a".repeat(64)}`,
+    status: "Submitted" as const,
+    confirmations: 0,
+  };
+  const invalidated = markGuidedMintReceiptsForReconciliation([submitted]);
+  assert.equal(invalidated[0].hash, submitted.hash);
+  assert.equal(invalidated[0].status, "Unknown");
+  assert.match(invalidated[0].error ?? "", /reconciliation/i);
 });

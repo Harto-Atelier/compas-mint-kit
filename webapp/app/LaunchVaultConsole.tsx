@@ -2,7 +2,7 @@
 
 /* eslint-disable react-hooks/set-state-in-effect, react-hooks/purity */
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   LAUNCH_VAULT_STORAGE_KEY,
   createLaunchVaultPayload,
@@ -36,6 +36,13 @@ import {
   parseLaunchVaultBackupRestore,
   type AuthenticatedLaunchVaultRestore,
 } from "@/lib/launch-vault-backup-restore";
+import {
+  createLaunchVaultGenerationGuard,
+  removeLaunchVaultStorage,
+  subscribeToLaunchVaultLifecycle,
+  writeLaunchVaultStorage,
+  type LaunchVaultLifecycleAction,
+} from "@/lib/launch-vault-lifecycle";
 
 const FIELD =
   "h-12 rounded-2xl border border-violet-100 bg-white/90 px-4 text-sm font-bold text-slate-950 outline-none shadow-sm transition placeholder:text-slate-400 focus:border-violet-300 focus:ring-4 focus:ring-violet-100";
@@ -64,6 +71,7 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
   const [restoreFileName, setRestoreFileName] = useState<string | null>(null);
   const [restoreFileInputKey, setRestoreFileInputKey] = useState(0);
   const [restorePassphrase, setRestorePassphrase] = useState("");
+  const [restoreCurrentPassphrase, setRestoreCurrentPassphrase] = useState("");
   const [authenticatedRestore, setAuthenticatedRestore] = useState<AuthenticatedLaunchVaultRestore | null>(null);
   const [replaceConfirmation, setReplaceConfirmation] = useState("");
 
@@ -78,6 +86,8 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
   const [sealPassphrase, setSealPassphrase] = useState("");
 
   const [wipePhrase, setWipePhrase] = useState("");
+  const lifecycleSourceId = useRef(`launch-vault-console-${Math.random().toString(36).slice(2)}`);
+  const vaultGeneration = useRef(createLaunchVaultGenerationGuard());
 
   useEffect(() => {
     setStorageReady(true);
@@ -89,6 +99,22 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
     } catch (err) {
       setError(err instanceof Error ? err.message : "Stored launch vault could not be read.");
     }
+    return subscribeToLaunchVaultLifecycle(window, (change) => {
+      vaultGeneration.current.invalidate();
+      setVault(null);
+      setBusy(null);
+      setUnlockPassphrase("");
+      setBurnerPassphrase("");
+      setPrivateKeyInput("");
+      setSealPassphrase("");
+      setRestorePassphrase("");
+      setRestoreCurrentPassphrase("");
+      setAuthenticatedRestore(null);
+      setReplaceConfirmation("");
+      setEncryptedBackup(change.newValue ? parseStoredBackupSafely(change.newValue) : null);
+      setStorageOccupied(change.newValue !== null);
+      setNotice("The encrypted browser Vault changed in another context. Decrypted state and pending actions were invalidated.");
+    }, { ignoreSourceId: lifecycleSourceId.current });
   }, []);
 
   const publicWallets = useMemo(() => vault?.wallets.map(toPublicLaunchWallet) ?? [], [vault]);
@@ -103,7 +129,8 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
     event.preventDefault();
     resetMessages();
 
-    if (storageOccupied || window.localStorage.getItem(LAUNCH_VAULT_STORAGE_KEY) !== null) {
+    const storageSnapshot = window.localStorage.getItem(LAUNCH_VAULT_STORAGE_KEY);
+    if (storageOccupied || storageSnapshot !== null) {
       setError("A launch vault already exists in this browser. Export or wipe it before creating a new one.");
       return;
     }
@@ -113,6 +140,7 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
     }
 
     setBusy("Creating encrypted vault…");
+    const operationGeneration = vaultGeneration.current.begin();
     try {
       const now = Date.now();
       const payload = createLaunchVaultPayload({
@@ -121,7 +149,8 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
         now,
       });
       const backup = await encryptLaunchVaultPayload(payload, createPassphrase, now);
-      persistBackup(backup);
+      assertVaultOperationCurrent(operationGeneration, storageSnapshot);
+      persistBackup(backup, "persist", storageSnapshot);
       setVault(payload);
       setNotice("Launch vault created and unlocked. The passphrase was cleared; only the encrypted blob was stored in this browser.");
       setCreatePassphrase("");
@@ -143,8 +172,11 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
     }
 
     setBusy("Unlocking vault…");
+    const storageSnapshot = window.localStorage.getItem(LAUNCH_VAULT_STORAGE_KEY);
+    const operationGeneration = vaultGeneration.current.begin();
     try {
       const payload = await decryptLaunchVaultBackup(encryptedBackup, unlockPassphrase);
+      assertVaultOperationCurrent(operationGeneration, storageSnapshot);
       setVault(payload);
       setUnlockPassphrase("");
       setNotice("Vault unlocked. Private keys are decrypted only in this React session and are never displayed.");
@@ -165,6 +197,8 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
     }
 
     setBusy("Generating browser-local burners and sealing vault…");
+    const storageSnapshot = window.localStorage.getItem(LAUNCH_VAULT_STORAGE_KEY);
+    const operationGeneration = vaultGeneration.current.begin();
     try {
       const result = await generateAndSealBurners({
         encryptedBackup,
@@ -172,7 +206,8 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
         count: Number(burnerCount),
         chain: burnerChain,
       });
-      persistBackup(result.encryptedBackup);
+      assertVaultOperationCurrent(operationGeneration, storageSnapshot);
+      persistBackup(result.encryptedBackup, "reseal", storageSnapshot);
       setVault(result.payload);
       setNotice(
         `${result.added} burner wallet${result.added === 1 ? "" : "s"} generated locally and sealed into a fresh AES-GCM backup. Export the updated encrypted backup before funding.`,
@@ -196,8 +231,11 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
     }
 
     setBusy("Deriving addresses and sealing vault…");
+    const storageSnapshot = window.localStorage.getItem(LAUNCH_VAULT_STORAGE_KEY);
+    const operationGeneration = vaultGeneration.current.begin();
     try {
       const verifiedVault = await decryptLaunchVaultBackup(encryptedBackup, sealPassphrase);
+      assertVaultOperationCurrent(operationGeneration, storageSnapshot);
       const imports = bulkMode
         ? parsePrivateKeyBulkImport(privateKeyInput, walletLabel, walletChain)
         : [deriveWalletFromPrivateKey(privateKeyInput, walletLabel, walletChain)];
@@ -214,7 +252,8 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
       }
 
       const backup = await encryptLaunchVaultPayload(merged.payload, sealPassphrase, now);
-      persistBackup(backup);
+      assertVaultOperationCurrent(operationGeneration, storageSnapshot);
+      persistBackup(backup, "reseal", storageSnapshot);
       setVault(merged.payload);
       setNotice(
         `${merged.added} wallet${merged.added === 1 ? "" : "s"} sealed. Derived addresses are visible; private keys were cleared from the form and remain encrypted at rest.`,
@@ -236,15 +275,19 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
     if (!passphrase) return;
 
     setBusy("Removing wallet and re-sealing vault…");
+    const storageSnapshot = window.localStorage.getItem(LAUNCH_VAULT_STORAGE_KEY);
+    const operationGeneration = vaultGeneration.current.begin();
     try {
       const verifiedVault = await decryptLaunchVaultBackup(encryptedBackup, passphrase);
+      assertVaultOperationCurrent(operationGeneration, storageSnapshot);
       const nextVault = {
         ...verifiedVault,
         updatedAt: Date.now(),
         wallets: verifiedVault.wallets.filter((wallet) => wallet.id !== walletId),
       };
-      const backup = await encryptLaunchVaultPayload(nextVault, passphrase);
-      persistBackup(backup);
+      const backup = await encryptLaunchVaultPayload(nextVault, passphrase, nextVault.updatedAt);
+      assertVaultOperationCurrent(operationGeneration, storageSnapshot);
+      persistBackup(backup, "reseal", storageSnapshot);
       setVault(nextVault);
       setNotice("Wallet removed and encrypted vault re-sealed. No plaintext key was exported or shown.");
     } catch {
@@ -255,6 +298,7 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
   }
 
   function handleLock() {
+    vaultGeneration.current.invalidate();
     setVault(null);
     setCreatePassphrase("");
     setCreateConfirm("");
@@ -280,10 +324,12 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
   }
 
   async function handleRestoreFile(file: File | null) {
+    const restoreFileGeneration = vaultGeneration.current.invalidate();
     resetMessages();
     setRestoreText("");
     setRestoreFileName(null);
     setRestorePassphrase("");
+    setRestoreCurrentPassphrase("");
     setAuthenticatedRestore(null);
     setReplaceConfirmation("");
     if (!file) return;
@@ -291,6 +337,7 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
     try {
       assertLaunchVaultBackupFileSize(file.size);
       const raw = await file.text();
+      if (!vaultGeneration.current.isCurrent(restoreFileGeneration)) return;
       const validatedBackup = parseLaunchVaultBackupRestore(raw);
       setRestoreText(serializeEncryptedLaunchVaultBackup(validatedBackup));
       setRestoreFileName(file.name);
@@ -305,6 +352,7 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
     event.preventDefault();
     resetMessages();
     setBusy("Authenticating encrypted backup locally…");
+    const restoreAuthGeneration = vaultGeneration.current.invalidate();
 
     try {
       const canonicalCandidate = serializeEncryptedLaunchVaultBackup(parseLaunchVaultBackupRestore(restoreText));
@@ -314,17 +362,18 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
         raw: canonicalCandidate,
         candidatePassphrase: restorePassphrase,
         storageSnapshot,
-        existingVault: storageSnapshot === null || !encryptedBackup || !vault
-          ? null
-          : { encryptedBackup, payload: vault },
+        currentVaultPassphrase: storageSnapshot === null ? null : restoreCurrentPassphrase,
       });
+      assertVaultOperationCurrent(restoreAuthGeneration, storageSnapshot);
       setRestoreText(prepared.canonicalSerialized);
       setAuthenticatedRestore(prepared);
       setRestorePassphrase("");
+      setRestoreCurrentPassphrase("");
       setReplaceConfirmation("");
       setNotice("Backup authenticated and deep-validated locally. Review the public-only summary before committing the replacement.");
     } catch (err) {
       setRestorePassphrase("");
+      setRestoreCurrentPassphrase("");
       setAuthenticatedRestore(null);
       setError(err instanceof Error ? err.message : "Could not authenticate the encrypted launch vault backup.");
     } finally {
@@ -345,6 +394,8 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
         prepared: authenticatedRestore,
         confirmation: replaceConfirmation,
         storage: window.localStorage,
+        eventTarget: window,
+        sourceId: lifecycleSourceId.current,
       });
       setEncryptedBackup(restoredBackup);
       setStorageOccupied(true);
@@ -369,7 +420,13 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
       setError(`Type “${wipeConfirmation}” exactly to wipe the encrypted browser vault.`);
       return;
     }
-    window.localStorage.removeItem(LAUNCH_VAULT_STORAGE_KEY);
+    vaultGeneration.current.invalidate();
+    removeLaunchVaultStorage({
+      storage: window.localStorage,
+      eventTarget: window,
+      sourceId: lifecycleSourceId.current,
+      action: "wipe",
+    });
     setEncryptedBackup(null);
     setStorageOccupied(false);
     setVault(null);
@@ -385,9 +442,22 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
     setNotice("Encrypted launch vault wiped from localStorage. Existing downloaded backups, if any, are not affected.");
   }
 
-  function persistBackup(backup: EncryptedLaunchVaultBackup) {
+  function persistBackup(
+    backup: EncryptedLaunchVaultBackup,
+    action: Exclude<LaunchVaultLifecycleAction, "wipe" | "restore">,
+    expectedStorageSnapshot: string | null,
+  ) {
     const serialized = serializeEncryptedLaunchVaultBackup(backup);
-    window.localStorage.setItem(LAUNCH_VAULT_STORAGE_KEY, serialized);
+    if (window.localStorage.getItem(LAUNCH_VAULT_STORAGE_KEY) !== expectedStorageSnapshot) {
+      throw new Error("The encrypted browser Vault changed during this operation. Unlock the current Vault and try again.");
+    }
+    writeLaunchVaultStorage({
+      storage: window.localStorage,
+      eventTarget: window,
+      sourceId: lifecycleSourceId.current,
+      action,
+      serialized,
+    });
     setStorageOccupied(true);
     setEncryptedBackup(backup);
   }
@@ -401,11 +471,21 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
     setRestoreText("");
     setRestoreFileName(null);
     setRestorePassphrase("");
+    setRestoreCurrentPassphrase("");
     setAuthenticatedRestore(null);
     setReplaceConfirmation("");
     setRestoreFileInputKey((current) => current + 1);
     setUnlockPassphrase("");
     setError(null);
+  }
+
+  function assertVaultOperationCurrent(generation: number, storageSnapshot: string | null) {
+    if (
+      !vaultGeneration.current.isCurrent(generation) ||
+      window.localStorage.getItem(LAUNCH_VAULT_STORAGE_KEY) !== storageSnapshot
+    ) {
+      throw new Error("The encrypted browser Vault changed while this operation was running. Stale completion was discarded.");
+    }
   }
 
   return (
@@ -454,17 +534,21 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
               hasVault={storageOccupied}
               replaceConfirmation={replaceConfirmation}
               restoreFileName={restoreFileName}
+              restoreCurrentPassphrase={restoreCurrentPassphrase}
               restorePassphrase={restorePassphrase}
               restoreText={restoreText}
               onAuthenticate={handleAuthenticateRestore}
               onCommit={handleCommitRestore}
               onFile={handleRestoreFile}
               onReplaceConfirmation={setReplaceConfirmation}
+              onRestoreCurrentPassphrase={setRestoreCurrentPassphrase}
               onRestorePassphrase={setRestorePassphrase}
               onRestoreText={(value) => {
+                vaultGeneration.current.invalidate();
                 setRestoreText(value);
                 setRestoreFileName(null);
                 setRestorePassphrase("");
+                setRestoreCurrentPassphrase("");
                 setAuthenticatedRestore(null);
                 setReplaceConfirmation("");
               }}
@@ -690,12 +774,14 @@ export function RestoreBackupPanel({
   hasVault,
   replaceConfirmation,
   restoreFileName,
+  restoreCurrentPassphrase,
   restorePassphrase,
   restoreText,
   onAuthenticate,
   onCommit,
   onFile,
   onReplaceConfirmation,
+  onRestoreCurrentPassphrase,
   onRestorePassphrase,
   onRestoreText,
 }: {
@@ -704,12 +790,14 @@ export function RestoreBackupPanel({
   hasVault: boolean;
   replaceConfirmation: string;
   restoreFileName: string | null;
+  restoreCurrentPassphrase: string;
   restorePassphrase: string;
   restoreText: string;
   onAuthenticate: (event: FormEvent<HTMLFormElement>) => void;
   onCommit: (event: FormEvent<HTMLFormElement>) => void;
   onFile: (file: File | null) => void;
   onReplaceConfirmation: (value: string) => void;
+  onRestoreCurrentPassphrase: (value: string) => void;
   onRestorePassphrase: (value: string) => void;
   onRestoreText: (value: string) => void;
 }) {
@@ -770,6 +858,22 @@ export function RestoreBackupPanel({
               className={FIELD}
             />
           </label>
+
+          {hasVault ? (
+            <label className="mt-4 grid gap-2 text-xs font-black uppercase tracking-[0.18em] text-amber-700">
+              Current browser Vault passphrase
+              <input
+                value={restoreCurrentPassphrase}
+                onChange={(event) => onRestoreCurrentPassphrase(event.target.value)}
+                minLength={12}
+                type="password"
+                autoComplete="current-password"
+                required
+                className={`${FIELD} border-amber-200 focus:border-amber-300 focus:ring-amber-100`}
+              />
+              <span className="normal-case tracking-normal text-amber-700/80">Authenticates the exact current localStorage snapshot used as the rollback baseline.</span>
+            </label>
+          ) : null}
 
           <button type="submit" className="mt-5 h-12 w-full rounded-2xl border border-violet-200 bg-white px-5 font-black text-violet-700 transition hover:bg-violet-50">
             Authenticate backup locally
@@ -1075,6 +1179,14 @@ function InfoTile({ label, value }: { label: string; value: string | number }) {
       <p className="mt-1 break-all font-black text-slate-950">{value}</p>
     </div>
   );
+}
+
+function parseStoredBackupSafely(serialized: string): EncryptedLaunchVaultBackup | null {
+  try {
+    return parseEncryptedLaunchVaultBackup(JSON.parse(serialized));
+  } catch {
+    return null;
+  }
 }
 
 function downloadTextFile(filename: string, contents: string) {
