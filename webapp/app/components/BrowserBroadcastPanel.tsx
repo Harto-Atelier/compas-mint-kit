@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { formatEther } from "ethers";
 import {
   LAUNCH_VAULT_STORAGE_KEY,
@@ -30,6 +30,7 @@ import {
 import type { CollectionCard, MintStage, StageKind } from "@/lib/mint-types";
 import { fetchSignedGateSession, type CompasGateSession } from "@/lib/compas-gate";
 import { COMPAS_AUTOPILOT_HANDOFF_KEY, type CompasAutopilotHandoff } from "@/lib/compas-autopilot";
+import { createLaunchVaultGenerationGuard, subscribeToLaunchVaultLifecycle } from "@/lib/launch-vault-lifecycle";
 
 const FIELD = "h-11 rounded-2xl border border-violet-100 bg-white px-3 text-sm font-bold text-slate-950 outline-none shadow-sm placeholder:text-slate-400 focus:border-violet-300 focus:ring-4 focus:ring-violet-100";
 const CHAINS: BrowserBroadcastChainKey[] = ["ethereum", "base", "robinhood"];
@@ -43,7 +44,7 @@ type BrowserBroadcastPanelProps = {
 export default function BrowserBroadcastPanel({ collection, quantities, stages }: BrowserBroadcastPanelProps) {
   const [vault, setVault] = useState<LaunchVaultPayload | null>(null);
   const [browserWalletCount, setBrowserWalletCount] = useState(1);
-  const [encryptedBackup] = useState<EncryptedLaunchVaultBackup | null>(() => readStoredVaultBackup());
+  const [encryptedBackup, setEncryptedBackup] = useState<EncryptedLaunchVaultBackup | null>(() => readStoredVaultBackup());
   const [unlockPassphrase, setUnlockPassphrase] = useState("");
   const [chainKey, setChainKey] = useState<BrowserBroadcastChainKey>(() => defaultChainKey(collection.chain.key));
   const [rpcUrl, setRpcUrl] = useState("");
@@ -65,10 +66,24 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages }
   const [recipientMode, setRecipientMode] = useState<BrowserMintRecipientMode>("holder");
   const [customRecipientAddress, setCustomRecipientAddress] = useState("");
   const [holderSession, setHolderSession] = useState<CompasGateSession | null>(null);
+  const vaultGeneration = useRef(createLaunchVaultGenerationGuard());
 
   useEffect(() => {
     fetchSignedGateSession().then(setHolderSession).catch(() => setHolderSession(null));
   }, []);
+
+  useEffect(() => subscribeToLaunchVaultLifecycle(window, () => {
+    vaultGeneration.current.invalidate();
+    setVault(null);
+    setEncryptedBackup(readStoredVaultBackup());
+    setUnlockPassphrase("");
+    setBusy(null);
+    setTransactions((current) => invalidateBrowserMintTransactions(current));
+    setBroadcastOpen(false);
+    setBroadcastConsent(false);
+    setBroadcastConsentBinding(null);
+    setNotice("The encrypted browser Vault changed. Keys, signer authority, prepared transactions, simulations, and broadcast consent were invalidated.");
+  }), []);
 
   const handoffMatchesCollection = autopilotHandoff?.signerDefaults.collectionAddress.toLowerCase() === collection.address.toLowerCase();
   const selectedStages = useMemo<BrowserMintStageInput[]>(
@@ -135,8 +150,16 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages }
       return;
     }
     setBusy("Unlocking encrypted launch vault…");
+    const storageSnapshot = window.localStorage.getItem(LAUNCH_VAULT_STORAGE_KEY);
+    const unlockGeneration = vaultGeneration.current.begin();
     try {
       const payload = await decryptLaunchVaultBackup(encryptedBackup, unlockPassphrase);
+      if (
+        !vaultGeneration.current.isCurrent(unlockGeneration) ||
+        window.localStorage.getItem(LAUNCH_VAULT_STORAGE_KEY) !== storageSnapshot
+      ) {
+        throw new Error("The encrypted browser Vault changed while unlock was pending.");
+      }
       revokePreparedBrowserMintSigners(transactions);
       setTransactions((current) => current.filter(isTerminalBrowserMint));
       setVault(payload);
@@ -154,6 +177,7 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages }
   }
 
   function handleDropKeys() {
+    vaultGeneration.current.invalidate();
     revokePreparedBrowserMintSigners(transactions);
     setTransactions((current) => current.filter(isTerminalBrowserMint));
     setVault(null);
@@ -200,6 +224,7 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages }
 
   async function handleSimulate() {
     resetMessages();
+    const simulationGeneration = vaultGeneration.current.begin();
     let current = activeTransactions;
     let terminalRows = transactions.filter(isTerminalBrowserMint);
     if (current.length === 0) {
@@ -235,9 +260,16 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages }
     const next: BrowserPreparedMint[] = [...terminalRows, ...current];
     for (const [index, tx] of next.entries()) {
       if (isTerminalBrowserMint(tx)) continue;
-      next[index] = await simulatePreparedBrowserMint(tx);
+      const simulated = await simulatePreparedBrowserMint(tx);
+      if (!vaultGeneration.current.isCurrent(simulationGeneration)) {
+        revokePreparedBrowserMintSigners([simulated]);
+        setBusy(null);
+        return;
+      }
+      next[index] = simulated;
       setTransactions([...next]);
     }
+    if (!vaultGeneration.current.isCurrent(simulationGeneration)) return;
     setTransactions(next);
     setBusy(null);
     const failures = next.filter((tx) => tx.status === "failed").length;
@@ -265,13 +297,26 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages }
       return;
     }
     setBusy("Signing and broadcasting from unlocked in-memory keys…");
+    const broadcastGeneration = vaultGeneration.current.begin();
     const next = [...transactions];
     for (const [index, tx] of next.entries()) {
       if (isTerminalBrowserMint(tx)) continue;
+      if (!vaultGeneration.current.isCurrent(broadcastGeneration)) return;
       const sent = await broadcastPreparedBrowserMint(tx, {
         explicitConsent: broadcastConsent,
         consentBinding: broadcastConsentBinding,
+        isAuthorityCurrent: () => vaultGeneration.current.isCurrent(broadcastGeneration),
       });
+      if (!vaultGeneration.current.isCurrent(broadcastGeneration)) {
+        setTransactions((current) => reconcileInvalidatedBroadcastResult(current, sent));
+        setBusy(null);
+        if (sent.status === "broadcast") {
+          setNotice("The Vault changed while broadcast was in flight. Signer authority and remaining simulated rows were revoked; the submitted transaction hash was retained for reconciliation.");
+        } else {
+          setError("The Vault changed while broadcast was in flight. Signer authority and remaining simulated rows were revoked; the terminal send error was retained for reconciliation.");
+        }
+        return;
+      }
       next[index] = sent;
       setTransactions([...next]);
     }
@@ -521,6 +566,22 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages }
       ) : null}
     </section>
   );
+}
+
+export function reconcileInvalidatedBroadcastResult(
+  current: readonly BrowserPreparedMint[],
+  completed: BrowserPreparedMint,
+): BrowserPreparedMint[] {
+  const terminalRows = invalidateBrowserMintTransactions(current);
+  revokePreparedBrowserMintSigners([completed]);
+  if (!isTerminalBrowserMint(completed)) return terminalRows;
+
+  const completedIndex = terminalRows.findIndex((tx) => tx.binding === completed.binding && tx.id === completed.id);
+  if (completedIndex === -1) return [...terminalRows, completed];
+
+  const reconciled = [...terminalRows];
+  reconciled[completedIndex] = completed;
+  return reconciled;
 }
 
 export function BroadcastPayerSummary({
