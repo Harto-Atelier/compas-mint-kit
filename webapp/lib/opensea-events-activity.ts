@@ -24,6 +24,8 @@ export interface OpenSeaEventsActivitySnapshot {
   error?: string;
   fetchedAt: string;
   eventCount: number;
+  /** Normalized events backing the metrics — reused by downstream planners (Market Fighter). */
+  events: OpenSeaActivityEvent[];
   metrics: OpenSeaActivityMetrics;
 }
 
@@ -169,6 +171,7 @@ function snapshot(slug: string, fetchedAt: string, status: OpenSeaEventsActivity
     ...(error ? { error } : {}),
     fetchedAt,
     eventCount: events.length,
+    events,
     metrics: computeActivityMetrics(events, now ?? new Date(fetchedAt)),
   };
 }

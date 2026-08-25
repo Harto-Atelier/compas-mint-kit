@@ -58,6 +58,7 @@ function activitySnapshot(overrides: Partial<OpenSeaEventsActivitySnapshot["metr
     ...(error ? { error } : {}),
     fetchedAt: "2026-08-23T00:00:00.000Z",
     eventCount: 10,
+    events: [],
     metrics: { mintsLast30m: 0, mintsLast24h: 0, salesLast24h: 0, avgSalePriceEth24h: null, listingsLast24h: 0, lastMintAt: null, ...overrides },
   };
 }

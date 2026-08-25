@@ -12,6 +12,14 @@ import {
   type MarketFighterSellMode,
 } from "@/lib/market-fighter";
 import type { LivePressureMetrics } from "@/lib/bot-pressure-live";
+import {
+  buildFighterPlan,
+  defaultFighterPolicy,
+  COMPAS_MARKET_FIGHTER_POLICY_KEY,
+  type BotPressureSnapshot,
+  type FighterHolding,
+  type FighterPolicy,
+} from "@/lib/compas-market-fighter";
 import { fetchSignedGateSession, type CompasGateSession } from "@/lib/compas-gate";
 import { extractCostBasisFromBrowserReport, rejectSecretShapedReport, summarizeCostBasis, type CostBasisSummary } from "@/lib/cost-basis";
 import { buildSeaportListingDraft } from "@/lib/seaport-listing-draft";
@@ -185,6 +193,8 @@ export default function MarketFighterPanel({ embedded = false }: { embedded?: bo
         </div>
       </div>
 
+      <DefensivePlannerSection positions={positions} />
+
       <div className="mt-5 grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
         <div className="grid gap-4">
           <PolicyCard policy={policy} setPolicy={persistPolicy} />
@@ -350,6 +360,144 @@ function PositionForm({ addPosition, draft, setDraft }: { draft: HolderPosition;
 
 function Metric({ label, value }: { label: string; value: string | number }) {
   return <div className="rounded-2xl border border-red-100 bg-red-50/60 p-3"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">{label}</p><p className="mt-1 text-sm font-black text-slate-950">{value}</p></div>;
+}
+
+type PressureApiResponse = {
+  ok: boolean;
+  source?: { kind: string; slug: string; status: "live" | "unavailable" | "not-configured"; error?: string; fetchedAt: string; eventCount: number };
+  pressure?: BotPressureSnapshot;
+};
+
+function DefensivePlannerSection({ positions }: { positions: HolderPosition[] }) {
+  const [fighterPolicy, setFighterPolicy] = useState<FighterPolicy>(() => readJson<FighterPolicy>(COMPAS_MARKET_FIGHTER_POLICY_KEY) ?? defaultFighterPolicy());
+  const [slug, setSlug] = useState("");
+  const [floorEthInput, setFloorEthInput] = useState("");
+  const [pressureBusy, setPressureBusy] = useState(false);
+  const [pressureResponse, setPressureResponse] = useState<PressureApiResponse | null>(null);
+  const [pressureError, setPressureError] = useState<string | null>(null);
+
+  const holdings: FighterHolding[] = useMemo(
+    () => positions.map((position) => ({ tokenId: position.tokenId, mintCostEth: position.costBasisEth, activeListing: position.status === "listed" })),
+    [positions],
+  );
+
+  const pressure = pressureResponse?.pressure ?? null;
+  const fighterPlan = useMemo(() => (pressure ? buildFighterPlan(fighterPolicy, pressure, holdings) : null), [fighterPolicy, pressure, holdings]);
+
+  function persistFighterPolicy(next: FighterPolicy) {
+    setFighterPolicy(next);
+    writeJson(COMPAS_MARKET_FIGHTER_POLICY_KEY, next);
+  }
+
+  async function checkPressure() {
+    const trimmed = slug.trim().toLowerCase();
+    if (!trimmed) {
+      setPressureError("Add the OpenSea collection slug first.");
+      return;
+    }
+    setPressureBusy(true);
+    setPressureError(null);
+    try {
+      const params = new URLSearchParams({ slug: trimmed });
+      const floor = Number(floorEthInput);
+      if (Number.isFinite(floor) && floor > 0) params.set("floorEth", String(floor));
+      const response = await fetch(`/api/market/pressure?${params.toString()}`, { cache: "no-store" });
+      const body = (await response.json()) as PressureApiResponse;
+      setPressureResponse(body);
+      if (body.source && body.source.status !== "live") {
+        setPressureError(`OpenSea events unavailable${body.source.error ? `: ${body.source.error}` : ""}. No numbers invented — try again later.`);
+      }
+    } catch (err) {
+      setPressureError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPressureBusy(false);
+    }
+  }
+
+  const level = pressure?.pressureLevel ?? null;
+  const levelTone = level === "bot-storm" ? "border-red-300 bg-red-100 text-red-800" : level === "active" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-slate-200 bg-white text-slate-700";
+  const levelLabel = level === "bot-storm" ? "Bot storm" : level === "active" ? "Active" : level === "calm" ? "Calm" : "No read yet";
+
+  return (
+    <section className="mt-5 rounded-3xl border border-red-200 bg-white p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-red-700">Defensive planner · OpenSea events</p>
+          <p className="mt-1 max-w-xl text-xs font-bold text-slate-600">Reads live collection listings/sales, rates bot pressure, and prices defensive listings from your positions. Nothing is signed here.</p>
+        </div>
+        <span className={`rounded-2xl border px-3 py-2 text-center text-xs font-black uppercase tracking-[0.14em] ${levelTone}`}>{levelLabel}</span>
+      </div>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_120px_auto]">
+        <input aria-label="OpenSea collection slug" value={slug} onChange={(event) => setSlug(event.target.value)} placeholder="opensea collection slug" className={`${FIELD} normal-case tracking-normal`} />
+        <input aria-label="Floor ETH" type="number" step="0.001" value={floorEthInput} onChange={(event) => setFloorEthInput(event.target.value)} placeholder="floor ETH" className={FIELD} />
+        <button type="button" onClick={checkPressure} disabled={pressureBusy} className="rounded-2xl bg-red-600 px-4 py-2 text-xs font-black uppercase tracking-[0.12em] text-white disabled:cursor-not-allowed disabled:opacity-50">{pressureBusy ? "Checking…" : "Check pressure"}</button>
+      </div>
+
+      {pressureError ? <p className="mt-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">{pressureError}</p> : null}
+
+      {pressure && pressureResponse?.source?.status === "live" ? (
+        <div className="mt-3 grid gap-2 text-xs font-bold text-slate-700 sm:grid-cols-3 lg:grid-cols-6">
+          <Metric label="Listings 1h" value={pressure.listingsLast1h} />
+          <Metric label="Listings 24h" value={pressure.listingsLast24h} />
+          <Metric label="Listers est." value={pressure.uniqueListers24hEstimate} />
+          <Metric label="Sales 24h" value={pressure.salesLast24h} />
+          <Metric label="Floor" value={pressure.floorEth !== null ? `${pressure.floorEth} ETH` : "unknown"} />
+          <Metric label="Floor drop 24h" value={pressure.floorDropBps24h > 0 ? `${(pressure.floorDropBps24h / 100).toFixed(1)}%` : "—"} />
+        </div>
+      ) : null}
+      {pressure && pressure.reasons.length ? <ul className="mt-2 flex flex-wrap gap-2 text-xs font-black text-red-700">{pressure.reasons.map((reason) => <li key={reason} className="rounded-full border border-red-200 bg-red-50 px-3 py-1">{reason}</li>)}</ul> : null}
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+        <label className="grid gap-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">
+          Anchor
+          <select value={fighterPolicy.floorAnchor} onChange={(event) => persistFighterPolicy({ ...fighterPolicy, floorAnchor: event.target.value as FighterPolicy["floorAnchor"] })} className={FIELD}>
+            <option value="floor">Collection floor</option>
+            <option value="trait-floor">Trait floor</option>
+          </select>
+        </label>
+        <label className="grid gap-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">
+          Undercut (bps)
+          <input type="number" value={fighterPolicy.undercutBps} onChange={(event) => persistFighterPolicy({ ...fighterPolicy, undercutBps: Number(event.target.value) })} className={FIELD} />
+        </label>
+        <label className="grid gap-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">
+          Min margin over cost (bps)
+          <input type="number" value={fighterPolicy.minMarginBps} onChange={(event) => persistFighterPolicy({ ...fighterPolicy, minMarginBps: Number(event.target.value) })} className={FIELD} />
+        </label>
+        <label className="grid gap-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">
+          Max active listings
+          <input type="number" value={fighterPolicy.maxActiveListings} onChange={(event) => persistFighterPolicy({ ...fighterPolicy, maxActiveListings: Number(event.target.value) })} className={FIELD} />
+        </label>
+        <label className="grid gap-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">
+          Cooldown (min)
+          <input type="number" value={fighterPolicy.cooldownMinutes} onChange={(event) => persistFighterPolicy({ ...fighterPolicy, cooldownMinutes: Number(event.target.value) })} className={FIELD} />
+        </label>
+        <label className="grid gap-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">
+          During bot storm
+          <select value={fighterPolicy.stormBehavior} onChange={(event) => persistFighterPolicy({ ...fighterPolicy, stormBehavior: event.target.value as FighterPolicy["stormBehavior"] })} className={FIELD}>
+            <option value="hold">Hold (don&apos;t list)</option>
+            <option value="undercut">Keep undercutting</option>
+          </select>
+        </label>
+      </div>
+
+      <div className="mt-4 space-y-2">
+        {!pressure ? <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-3 py-5 text-center text-sm font-semibold text-slate-500">Check pressure first — suggestions come from live data only.</p> : null}
+        {pressure && holdings.length === 0 ? <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-3 py-5 text-center text-sm font-semibold text-slate-500">No positions yet. Add or auto-detect held tokens below to get defensive prices.</p> : null}
+        {fighterPlan?.suggestions.map((suggestion, index) => (
+          <article key={`${suggestion.tokenId ?? "token"}-${index}`} className={`rounded-2xl border px-3 py-3 text-sm ${suggestion.blocked ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <p className="font-black text-slate-950">{suggestion.tokenId ? `Token #${suggestion.tokenId}` : "Position"} · {suggestion.suggestedPriceEth} ETH</p>
+              <button type="button" disabled title="Manual signing — coming after canary QA" className="cursor-not-allowed rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-black text-slate-400">Review &amp; sign manually</button>
+            </div>
+            <p className="mt-1 text-xs font-bold text-slate-600">{suggestion.rationale}</p>
+            {suggestion.blockReasons.length ? <p className="mt-1 text-xs font-bold text-amber-800">Blocked: {suggestion.blockReasons.join(" · ")}</p> : null}
+          </article>
+        ))}
+      </div>
+      <p className="mt-3 rounded-2xl bg-slate-50 p-3 text-xs font-bold text-slate-600">Manual signing — coming after canary QA. This planner never auto-lists, never signs Seaport orders, never touches custody.</p>
+    </section>
+  );
 }
 
 function readJson<T>(key: string): T | null {
