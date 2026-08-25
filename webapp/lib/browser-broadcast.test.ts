@@ -511,6 +511,53 @@ test("concurrent live broadcast attempts consume one signer authority before the
   assert.equal(sendCalls, 1);
 });
 
+test("broadcast emits a secret-free monotonic timing trace for the live hot path", async () => {
+  const plan = buildBrowserMintPlan({
+    chainKey: "base",
+    collectionAddress: COLLECTION,
+    stages: [publicStage],
+    walletCount: 1,
+    vault: unlockedVault,
+    recipientMode: "payer",
+  });
+  const simulated = await simulatePreparedBrowserMint(plan.transactions[0], {
+    getNetwork: async () => ({ chainId: BigInt(8453) }),
+    call: async () => "0x",
+    estimateGas: async () => BigInt(123456),
+  });
+  const events: Array<{ stage: string; elapsedMs: number; deltaMs: number; txId: string }> = [];
+
+  const broadcasted = await broadcastPreparedBrowserMint(simulated, {
+    explicitConsent: true,
+    consentBinding: simulated.binding,
+    provider: { getNetwork: async () => ({ chainId: BigInt(8453) }) },
+    timing: (event) => events.push(event),
+    makeWallet: () => ({ sendTransaction: async () => ({ hash: `0x${"e".repeat(64)}` }) }),
+  });
+
+  assert.equal(broadcasted.status, "broadcast");
+  assert.deepEqual(events.map((event) => event.stage), [
+    "consent-received",
+    "consent-validated",
+    "signer-context-validated",
+    "calldata-binding-reviewed",
+    "provider-ready",
+    "rpc-chain-check-complete",
+    "authority-current-before-signing",
+    "signer-authority-consumed",
+    "wallet-object-created",
+    "send-transaction-start",
+    "send-transaction-response",
+    "broadcast-hash-validated",
+  ]);
+  for (const event of events) {
+    assert.equal(event.txId, simulated.id);
+    assert.equal(Number.isFinite(event.elapsedMs), true);
+    assert.equal(Number.isFinite(event.deltaMs), true);
+    assert.equal(JSON.stringify(event).includes(PRIVATE_KEY.slice(2)), false);
+  }
+});
+
 test("an invalid wallet response hash becomes a terminal failed row instead of losing receipt tracking", async () => {
   const plan = buildBrowserMintPlan({
     chainKey: "base",

@@ -163,6 +163,16 @@ export interface BrowserWalletLike {
   sendTransaction(request: BrowserPreparedMintRequest): Promise<{ hash: string }>;
 }
 
+export interface BrowserBroadcastTimingEvent {
+  txId: string;
+  stage: string;
+  elapsedMs: number;
+  deltaMs: number;
+  atMs: number;
+}
+
+export type BrowserBroadcastTimingSink = (event: BrowserBroadcastTimingEvent) => void;
+
 export type GuidedMintReceiptStatus = "Submitted" | "Confirming" | "Unknown" | "Confirmed" | "Failed";
 
 export interface GuidedMintReceipt {
@@ -469,10 +479,14 @@ export async function broadcastPreparedBrowserMint(
     makeWallet?: (privateKey: string, provider: unknown) => BrowserWalletLike;
     provider?: unknown;
     isAuthorityCurrent?: () => boolean;
+    timing?: BrowserBroadcastTimingSink;
   },
 ): Promise<BrowserPreparedMint> {
+  const trace = createBroadcastTimingTrace(tx.id, deps.timing);
+  trace("consent-received");
   if (tx.status !== "simulated") throw new Error("Dry-run/simulate before broadcast.");
   if (!deps.explicitConsent) throw new Error("Explicit broadcast confirmation is required before signing and sending.");
+  trace("consent-validated");
 
   const context = TX_CONTEXT.get(tx);
   if (!context || context.revoked) throw new Error("Unlocked private key is no longer available in memory. Re-unlock the vault.");
@@ -480,37 +494,47 @@ export async function broadcastPreparedBrowserMint(
   if (deps.consentBinding !== context.binding || tx.binding !== context.binding) {
     throw new Error("Explicit confirmation does not match the current transaction plan. Review and confirm again.");
   }
+  trace("signer-context-validated");
   if (!reviewPreparedBrowserMintCalldata(tx, {
     holderRecipientAddress: tx.recipientMode === "holder" ? tx.recipientAddress : undefined,
   }).readyForBroadcast) {
     throw new Error("Prepared transaction request no longer matches the simulated mint. Prepare and simulate again.");
   }
+  trace("calldata-binding-reviewed");
 
   context.broadcasting = true;
   const provider = deps.provider ?? new JsonRpcProvider(tx.rpcUrl);
+  trace("provider-ready");
   try {
     const network = await (provider as { getNetwork(): Promise<{ chainId: bigint | number }> }).getNetwork();
+    trace("rpc-chain-check-complete");
     if (BigInt(network.chainId) !== BigInt(tx.chain.chainId)) {
       throw new Error(`RPC chain ID ${network.chainId.toString()} does not match expected ${tx.chain.chainId}.`);
     }
     if (context.revoked || TX_CONTEXT.get(tx) !== context || deps.isAuthorityCurrent?.() === false) {
       throw new Error("Unlocked private key authority changed before broadcast. Re-unlock, prepare, and simulate again.");
     }
+    trace("authority-current-before-signing");
 
     // Consume signer authority synchronously before invoking any wallet/provider code. A
     // second click or concurrent call can never reach sendTransaction for this row.
     const privateKey = context.privateKey;
     context.revoked = true;
     TX_CONTEXT.delete(tx);
+    trace("signer-authority-consumed");
     try {
       const wallet = deps.makeWallet ? deps.makeWallet(privateKey, provider) : (new Wallet(privateKey, provider as JsonRpcProvider) as unknown as BrowserWalletLike);
+      trace("wallet-object-created");
       if (deps.isAuthorityCurrent?.() === false) {
         throw new Error("Unlocked private key authority changed before broadcast. No transaction was sent.");
       }
+      trace("send-transaction-start");
       const response = await wallet.sendTransaction(tx.request);
+      trace("send-transaction-response");
       if (!/^0x[0-9a-fA-F]{64}$/.test(response.hash)) {
         throw new Error("Wallet broadcast did not return a valid transaction hash. Treat this row as failed and recover manually; do not retry automatically.");
       }
+      trace("broadcast-hash-validated");
       return makeSerializablePreparedMint({
         ...tx,
         status: "broadcast",
@@ -520,10 +544,12 @@ export async function broadcastPreparedBrowserMint(
         broadcastAttempted: true,
       });
     } catch (error) {
+      trace("broadcast-failed");
       return makeSerializablePreparedMint({ ...tx, status: "failed", error: safeMessageOf(error), broadcastAttempted: true });
     }
   } catch (error) {
     if (!context.revoked && TX_CONTEXT.get(tx) === context) context.broadcasting = false;
+    trace("broadcast-preflight-failed");
     throw error;
   }
 }
@@ -744,6 +770,34 @@ function copyWithPrivateKey(tx: BrowserPreparedMint, patch: Partial<BrowserPrepa
   const context = TX_CONTEXT.get(tx);
   if (context) TX_CONTEXT.set(next, context);
   return next;
+}
+
+function createBroadcastTimingTrace(txId: string, sink?: BrowserBroadcastTimingSink): (stage: string) => void {
+  const start = monotonicNowMs();
+  let previous = start;
+  return (stage: string) => {
+    if (!sink) return;
+    const atMs = monotonicNowMs();
+    const elapsedMs = atMs - start;
+    const deltaMs = atMs - previous;
+    previous = atMs;
+    sink({
+      txId,
+      stage,
+      elapsedMs: roundTimingMs(elapsedMs),
+      deltaMs: roundTimingMs(deltaMs),
+      atMs: roundTimingMs(atMs),
+    });
+  };
+}
+
+function monotonicNowMs(): number {
+  const performanceLike = globalThis.performance;
+  return performanceLike?.now ? performanceLike.now() : Date.now();
+}
+
+function roundTimingMs(value: number): number {
+  return Math.round(value * 1000) / 1000;
 }
 
 function makeSerializablePreparedMint(tx: BrowserPreparedMint): BrowserPreparedMint {
