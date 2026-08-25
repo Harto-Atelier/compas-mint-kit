@@ -8,6 +8,7 @@ export interface RouteConfig {
 
 export interface RelayConfig {
   port: number;
+  authSecret?: string;
   allowedOrigins: string[];
   chainAllowlist: number[];
   maxRawBodyBytes: number;
@@ -37,6 +38,7 @@ export function loadConfig(env: Env = process.env): RelayConfig {
 
   return {
     port: integer(env.RELAY_PORT, DEFAULT_PORT, 'RELAY_PORT'),
+    authSecret: optionalSecret(env.RELAY_AUTH_SECRET ?? env.COMPAS_RELAY_AUTH_SECRET),
     allowedOrigins: list(env.RELAY_ALLOWED_ORIGINS),
     chainAllowlist: numberList(env.RELAY_CHAIN_ALLOWLIST, [1, 8453], 'RELAY_CHAIN_ALLOWLIST'),
     maxRawBodyBytes: integer(env.RELAY_MAX_RAW_BODY_BYTES, DEFAULT_BODY_LIMIT, 'RELAY_MAX_RAW_BODY_BYTES'),
@@ -51,6 +53,11 @@ export function loadConfig(env: Env = process.env): RelayConfig {
 function addJsonRpcRoute(routes: RouteConfig[], id: string, url: string | undefined): void {
   if (!url || !url.trim()) return;
   routes.push({ id, type: 'json-rpc', url: url.trim() });
+}
+
+function optionalSecret(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 function integer(value: string | undefined, fallback: number, name: string): number {

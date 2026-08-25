@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 
 import type { RelayConfig } from './config';
@@ -88,6 +89,7 @@ async function handleBroadcast(
   let chainId: number;
   try {
     ({ chainId, transactions: request } = validateBroadcastRequest(read.value, config, routeById, acceptedHashes));
+    validateRelayAuth(req, config, { chainId, expectedHashes: request.map((tx) => tx.expectedHash), transactionCount: request.length });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'invalid request';
     logger.warn('invalid broadcast request rejected', { error: message });
@@ -163,6 +165,50 @@ function validateBroadcastRequest(
   };
 }
 
+function validateRelayAuth(
+  req: IncomingMessage,
+  config: RelayConfig,
+  expected: { chainId: number; expectedHashes: string[]; transactionCount: number },
+): void {
+  if (!config.authSecret) throw new Error('relay auth secret is not configured');
+  const authorization = req.headers.authorization;
+  if (typeof authorization !== 'string' || !authorization.startsWith('Bearer ')) throw new Error('relay bearer token is required');
+  const verified = verifyRelayToken(authorization.slice('Bearer '.length), config.authSecret);
+  if (verified.purpose !== 'broadcast') throw new Error('relay token purpose mismatch');
+  if (verified.chainId !== expected.chainId) throw new Error('relay token chain mismatch');
+  if (expected.transactionCount > verified.maxTransactionCount) throw new Error('relay token transaction-count exceeded');
+  if (!sameHashSet(verified.expectedHashes, expected.expectedHashes)) throw new Error('relay token expected-hash mismatch');
+}
+
+function verifyRelayToken(token: string, secret: string): { chainId: number; purpose: string; maxTransactionCount: number; expectedHashes: string[] } {
+  const parts = token.split('.');
+  if (parts.length !== 3 || parts[0] !== 'relay-hmac-v1') throw new Error('relay token is malformed');
+  const expectedSig = createHmac('sha256', secret).update(`${parts[0]}.${parts[1]}`).digest('base64url');
+  const left = Buffer.from(parts[2]);
+  const right = Buffer.from(expectedSig);
+  if (left.length !== right.length || !timingSafeEqual(left, right)) throw new Error('relay token signature mismatch');
+  const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as Record<string, unknown>;
+  if (payload.schemaVersion !== 1 || payload.issuer !== 'compas-mint-kit' || payload.audience !== 'compas-fast-relay') throw new Error('relay token audience mismatch');
+  const now = Date.now();
+  if (typeof payload.expiresAt !== 'number' || payload.expiresAt < now) throw new Error('relay token expired');
+  if (typeof payload.chainId !== 'number' || !Number.isInteger(payload.chainId)) throw new Error('relay token chain is invalid');
+  if (payload.purpose !== 'broadcast' && payload.purpose !== 'arm') throw new Error('relay token purpose is invalid');
+  if (typeof payload.maxTransactionCount !== 'number' || !Number.isInteger(payload.maxTransactionCount)) throw new Error('relay token count is invalid');
+  if (!Array.isArray(payload.expectedHashes) || payload.expectedHashes.some((hash) => typeof hash !== 'string')) throw new Error('relay token expected hashes are invalid');
+  return {
+    chainId: payload.chainId,
+    purpose: payload.purpose,
+    maxTransactionCount: payload.maxTransactionCount,
+    expectedHashes: payload.expectedHashes.map((hash) => String(hash).toLowerCase()),
+  };
+}
+
+function sameHashSet(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  const rightSet = new Set(right.map((hash) => hash.toLowerCase()));
+  return left.every((hash) => rightSet.has(hash.toLowerCase()));
+}
+
 function validateRouteIds(value: unknown, routeById: Map<string, RelayRouteClient>, path: string, allowEmpty = false, fallback?: string[]): string[] {
   if (value === undefined) {
     if (fallback) return fallback;
@@ -215,7 +261,7 @@ function applyCors(req: IncomingMessage, res: ServerResponse, config: RelayConfi
   res.setHeader('access-control-allow-origin', config.allowedOrigins.includes('*') ? '*' : origin);
   res.setHeader('vary', 'origin');
   res.setHeader('access-control-allow-methods', 'GET,POST,OPTIONS');
-  res.setHeader('access-control-allow-headers', 'content-type');
+  res.setHeader('access-control-allow-headers', 'content-type, authorization');
   return true;
 }
 

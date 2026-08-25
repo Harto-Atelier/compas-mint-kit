@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, describe, it } from 'node:test';
+import { createHmac } from 'node:crypto';
 import { request } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { Wallet, keccak256 } from 'ethers';
@@ -10,6 +11,7 @@ import { createServer } from '../src/server';
 import type { RelayRouteClient } from '../src/routes';
 
 const wallet = new Wallet('0x' + '11'.repeat(32));
+const RELAY_AUTH_SECRET = 'test-relay-secret-with-enough-entropy';
 
 async function signedRawTx(chainId = 8453): Promise<string> {
   return wallet.signTransaction({
@@ -24,13 +26,37 @@ async function signedRawTx(chainId = 8453): Promise<string> {
   });
 }
 
-function postJson(port: number, path: string, body: unknown, origin = 'http://allowed.local') {
+function postJson(port: number, path: string, body: unknown, origin = 'http://allowed.local', token = tokenFor(body)) {
   const payload = JSON.stringify(body);
   return http(port, path, 'POST', payload, {
     'content-type': 'application/json',
     'content-length': Buffer.byteLength(payload).toString(),
+    authorization: `Bearer ${token}`,
     origin,
   });
+}
+
+function tokenFor(body: unknown, overrides: Record<string, unknown> = {}): string {
+  const obj = body as { chainId?: number; transactions?: Array<{ expectedHash?: string }> };
+  const payload = {
+    schemaVersion: 1,
+    issuer: 'compas-mint-kit',
+    audience: 'compas-fast-relay',
+    holderAddress: '0x0000000000000000000000000000000000000001',
+    launchId: 'test-launch',
+    chainId: obj.chainId ?? 8453,
+    purpose: 'broadcast',
+    maxTransactionCount: obj.transactions?.length ?? 1,
+    expectedHashes: obj.transactions?.map((tx) => tx.expectedHash).filter(Boolean) ?? [],
+    planBinding: '0x' + 'aa'.repeat(32),
+    issuedAt: Date.now(),
+    expiresAt: Date.now() + 60_000,
+    nonce: 'test-nonce-123456',
+    ...overrides,
+  };
+  const bodyPart = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  const sig = createHmac('sha256', RELAY_AUTH_SECRET).update(`relay-hmac-v1.${bodyPart}`).digest('base64url');
+  return `relay-hmac-v1.${bodyPart}.${sig}`;
 }
 
 function http(port: number, path: string, method = 'GET', body = '', headers: Record<string, string> = {}): Promise<{ statusCode: number; headers: Record<string, string | string[] | undefined>; body: string }> {
@@ -66,6 +92,7 @@ async function withServer(clients: RelayRouteClient[], options: Parameters<typeo
   const server = createServer({
     config: {
       port: 0,
+      authSecret: RELAY_AUTH_SECRET,
       allowedOrigins: ['http://allowed.local'],
       chainAllowlist: [8453],
       maxRawBodyBytes: 4096,
@@ -89,6 +116,7 @@ describe('Compas Fast Relay config', () => {
   it('loads route, origin, body, count, chain, concurrency, ttl, and log settings from environment', () => {
     const config = loadConfig({
       RELAY_PORT: '9001',
+      RELAY_AUTH_SECRET: RELAY_AUTH_SECRET,
       RELAY_ALLOWED_ORIGINS: 'http://localhost:3000, https://mint.compas.example',
       RELAY_CHAIN_ALLOWLIST: '1,8453',
       RELAY_MAX_RAW_BODY_BYTES: '2048',
@@ -102,6 +130,7 @@ describe('Compas Fast Relay config', () => {
     });
 
     assert.equal(config.port, 9001);
+    assert.equal(config.authSecret, RELAY_AUTH_SECRET);
     assert.deepEqual(config.allowedOrigins, ['http://localhost:3000', 'https://mint.compas.example']);
     assert.deepEqual(config.chainAllowlist, [1, 8453]);
     assert.equal(config.maxRawBodyBytes, 2048);
@@ -200,6 +229,25 @@ describe('Compas Fast Relay HTTP service', () => {
       { rawTx: tooManyRaw, expectedHash: keccak256(tooManyRaw) },
     ] });
     assert.equal(tooMany.statusCode, 400);
+  });
+
+  it('rejects missing or mismatched relay auth before routing raw bytes', async () => {
+    const rawTx = await signedRawTx();
+    const expectedHash = keccak256(rawTx);
+    const mock = relay('mock');
+    const { server, port } = await withServer([mock], {});
+    after(() => server.close());
+
+    const body = { chainId: 8453, transactions: [{ rawTx, expectedHash }] };
+    const missing = await postJson(port, '/broadcast', body, 'http://allowed.local', 'malformed');
+    assert.equal(missing.statusCode, 400);
+    assert.match(missing.body, /relay token/i);
+
+    const wrongHashToken = tokenFor(body, { expectedHashes: ['0x' + '22'.repeat(32)] });
+    const wrongHash = await postJson(port, '/broadcast', body, 'http://allowed.local', wrongHashToken);
+    assert.equal(wrongHash.statusCode, 400);
+    assert.match(wrongHash.body, /expected-hash mismatch/i);
+    assert.deepEqual(mock.submitted, []);
   });
 
   it('uses a safe logger and never writes raw transaction bodies to logs', async () => {
