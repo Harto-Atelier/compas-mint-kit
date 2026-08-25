@@ -1,0 +1,23 @@
+{
+  "name": "@compas/fast-relay",
+  "version": "0.1.0",
+  "description": "Standalone Compas Fast Relay for already-signed raw transaction transport only.",
+  "private": true,
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "scripts": {
+    "build": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json",
+    "start": "node dist/src/index.js",
+    "dev": "node --require ../../node_modules/ts-node/register src/index.ts",
+    "test": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json && node --test dist/test/*.test.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "ethers": "^6.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.2"
+  }
+}
