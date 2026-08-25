@@ -580,6 +580,9 @@ export async function pollPreparedBrowserMintReceipt(
     }
 
     const latestBlock = await rpc.getBlockNumber();
+    if (!Number.isSafeInteger(latestBlock) || latestBlock < 0) {
+      return unknownReceipt(current, "Latest block number is malformed. Re-poll without rebroadcasting.");
+    }
     const confirmations = Math.max(0, latestBlock - receipt.blockNumber + 1);
     if (confirmations < requiredConfirmations) {
       return { ...current, status: "Confirming", confirmations, error: undefined };

@@ -340,6 +340,24 @@ test("receipt malformed block numbers stay retryable and local tracker mismatche
   assert.equal(malformedBlock.status, "Unknown");
   assert.match(malformedBlock.error ?? "", /block/i);
 
+  const malformedLatestBlock = await pollPreparedBrowserMintReceipt(tx, createSubmittedMintReceipt(tx), {
+    ...providerBase,
+    getBlockNumber: async () => Number.NaN,
+    getTransactionReceipt: async () => ({
+      status: 1,
+      blockNumber: 100,
+      hash: TX_HASH,
+      logs: [{
+        address: COLLECTION,
+        topics: [id("Transfer(address,address,uint256)"), addressTopic("0x0000000000000000000000000000000000000000"), addressTopic(HOLDER), `0x${"2a".padStart(64, "0")}`],
+        data: "0x",
+      }],
+    }),
+  });
+  assert.equal(malformedLatestBlock.status, "Unknown");
+  assert.match(malformedLatestBlock.error ?? "", /latest block/i);
+  assert.equal(Number.isFinite(malformedLatestBlock.confirmations), true);
+
   const mismatchedTracker = await pollPreparedBrowserMintReceipt(tx, { ...createSubmittedMintReceipt(tx), hash: `0x${"b".repeat(64)}` }, {
     ...providerBase,
     getTransactionReceipt: async () => null,

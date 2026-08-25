@@ -809,12 +809,12 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
 
         {step === "burners" ? (
           <div className={CARD}>
-            <StepHeading number="02" title="Unlock encrypted burners" body="The canonical Vault stays encrypted at rest. This run keeps selected signers in memory so funding cannot lead to a re-entry dead end." />
+            <StepHeading number="02" title="Create or load temporary mint wallets" body="NFTs go to your verified Compas wallet. These burner wallets only pay for this mint; their keys stay encrypted in this browser and are never shown." />
             <div className="mt-4 grid gap-3 sm:grid-cols-[auto_1fr]">
-              <button type="button" onClick={() => openAdvanced("Vault")} className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] px-5 py-3 text-sm font-black">Create burners in Vault</button>
+              <button type="button" onClick={() => openAdvanced("Vault")} className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] px-5 py-3 text-sm font-black">Create temporary mint wallets</button>
               <form onSubmit={loadCanonicalBurners} className="grid gap-2 sm:grid-cols-[1fr_auto]">
-                <input type="password" value={vaultPassphrase} onChange={(event) => setVaultPassphrase(event.target.value)} placeholder="Vault passphrase" autoComplete="current-password" className={FIELD} />
-                <button type="submit" disabled={Boolean(busy)} className="rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:opacity-50">Unlock for this run</button>
+                <input type="password" value={vaultPassphrase} onChange={(event) => setVaultPassphrase(event.target.value)} placeholder="Backup passphrase" autoComplete="current-password" className={FIELD} />
+                <button type="submit" disabled={Boolean(busy)} className="rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:opacity-50">Load wallets for this mint</button>
               </form>
             </div>
             {burners.length > 0 ? <div className="mt-4 grid gap-2 sm:grid-cols-2">{burners.map((wallet) => <label key={wallet.id} className="flex items-center gap-3 rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-3 text-sm font-bold"><input type="checkbox" checked={selectedBurnerAddresses.includes(wallet.address)} onChange={() => toggleBurner(wallet.address)} /><span className="min-w-0"><span className="block font-black">{wallet.label}</span><span className="block truncate font-mono text-xs text-[color:var(--compas-muted)]">{maskVaultAddress(wallet.address)} · {wallet.chain}</span></span></label>)}</div> : null}
