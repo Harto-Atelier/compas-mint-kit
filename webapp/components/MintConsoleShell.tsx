@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useMemo, useState } from "react";
 import { DispersePanel } from "@/app/components/DisperseAcoPanels";
 import MintConsole from "@/app/components/MintConsole";
@@ -63,9 +64,15 @@ function cx(...classes: Array<string | false | null | undefined>) {
 
 function BrandMark() {
   return (
-    <div className="exq-brand-mark" aria-hidden="true">
-      <span>C</span>
-      <i />
+    <div className="exq-brand-mark overflow-hidden" aria-label="Compas">
+      <Image
+        src="/compas-logo.png"
+        alt="Compas pixel emblem"
+        width={48}
+        height={48}
+        priority
+        className="h-full w-full object-cover [image-rendering:pixelated]"
+      />
     </div>
   );
 }
@@ -157,15 +164,22 @@ function ReportStrip({
   stagedWallets,
   savedSchedules,
   unlockedVaultWallets,
+  skin,
+  setSkin,
 }: {
   stagedWallets: number;
   savedSchedules: number;
   unlockedVaultWallets: number;
+  skin: ConsoleSkin;
+  setSkin: (skin: ConsoleSkin) => void;
 }) {
   return (
     <section className="min-w-0 max-w-full overflow-hidden rounded-[1.5rem] bg-[color:var(--compas-line)] p-[1px] shadow-[0_18px_55px_rgba(124,58,237,0.20)] sm:rounded-[2rem] sm:shadow-[0_22px_70px_rgba(124,58,237,0.24)]">
       <div className="relative min-w-0 max-w-full overflow-hidden rounded-[1.45rem] bg-[color:var(--compas-hero)] px-4 py-4 text-[color:var(--compas-hero-ink)] sm:rounded-[1.95rem] sm:px-6">
         <div className="absolute -right-12 -top-16 h-36 w-36 rounded-full bg-white/20 blur-2xl" />
+        <div className="relative mb-3 flex justify-end">
+          <SkinSwitcher skin={skin} setSkin={setSkin} />
+        </div>
         <div className="relative flex min-w-0 max-w-full flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0 max-w-full">
             <p className="text-xs font-black uppercase tracking-[0.22em] text-[color:var(--compas-hero-muted)]">Console state</p>
@@ -288,7 +302,7 @@ const skinOptions: Array<{ skin: ConsoleSkin; label: string; swatch: string }> =
 function SkinSwitcher({ skin, setSkin }: { skin: ConsoleSkin; setSkin: (skin: ConsoleSkin) => void }) {
   return (
     <div
-      className="fixed bottom-[4.65rem] left-1/2 z-40 flex -translate-x-1/2 items-center gap-0.5 rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-card)] p-1 shadow-[4px_4px_0_var(--compas-shadow)] backdrop-blur-xl sm:bottom-3 lg:bottom-4"
+      className="inline-flex items-center gap-0.5 rounded-2xl border border-[color:var(--compas-hero-line)] bg-[color:var(--compas-hero-card)] p-1 backdrop-blur-xl"
       role="group"
       aria-label="Console color mode"
     >
@@ -374,7 +388,13 @@ export default function MintConsoleShell({ initialTab = "Mints" }: { initialTab?
         <div className="relative z-10 mx-auto grid max-w-[1480px] min-w-0 gap-5 lg:grid-cols-[300px_minmax(0,1fr)]">
           <Sidebar active={activeTab} setActive={setActiveTab} stagedWallets={wallets.length} />
           <div className="grid min-w-0 gap-5">
-            <ReportStrip stagedWallets={wallets.length} savedSchedules={savedSchedules} unlockedVaultWallets={unlockedVaultWallets} />
+            <ReportStrip
+              stagedWallets={wallets.length}
+              savedSchedules={savedSchedules}
+              unlockedVaultWallets={unlockedVaultWallets}
+              skin={skin}
+              setSkin={setSkin}
+            />
             <StatusRow activeLaunchId={activeLaunchId} />
             <OperatorFlow active={activeTab} setActive={setActiveTab} />
             <div className="rounded-[1.5rem] border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] px-4 py-3 text-sm font-bold text-[color:var(--compas-ink)] backdrop-blur">
@@ -384,7 +404,6 @@ export default function MintConsoleShell({ initialTab = "Mints" }: { initialTab?
           </div>
         </div>
       </div>
-      <SkinSwitcher skin={skin} setSkin={setSkin} />
       <MobileBottomNav active={activeTab} setActive={setActiveTab} />
     </main>
     </CompasGate>
