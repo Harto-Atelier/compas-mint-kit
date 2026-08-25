@@ -1,0 +1,22 @@
+{
+  "sampleCount": 25,
+  "warmupCount": 3,
+  "timeoutMs": 10000,
+  "method": "eth_chainId",
+  "providers": [
+    {
+      "label": "robinhood-public",
+      "provider": "Robinhood",
+      "region": "public",
+      "url": "https://rpc.mainnet.chain.robinhood.com/"
+    }
+  ],
+  "websocketFeeds": [
+    {
+      "label": "robinhood-sequencer-feed",
+      "provider": "Robinhood",
+      "region": "configure-me",
+      "url": "wss://sequencer-feed.example.invalid"
+    }
+  ]
+}
