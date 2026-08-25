@@ -427,11 +427,22 @@ function MadnessPanel({ policy, plan, setPolicy }: { policy: CompasMadnessPolicy
 
 function CandidateRow({ candidate }: { candidate: OpportunityScanResult["candidates"][number] }) {
   const tone = candidate.signal === "ready" ? "text-emerald-700 bg-emerald-50 border-emerald-200" : candidate.signal === "watch" ? "text-amber-700 bg-amber-50 border-amber-200" : "text-red-700 bg-red-50 border-red-200";
+  const activity = candidate.activity;
+  const showActivity = activity !== undefined && activity.status === "live";
   return (
     <article className="grid gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm sm:grid-cols-[1fr_auto] sm:items-center">
       <div className="min-w-0">
         <p className="truncate font-black text-slate-950">{candidate.name}</p>
         <p className="font-mono text-xs font-semibold text-slate-500">{candidate.address}</p>
+        {activity && showActivity ? (
+          <p className="mt-1 flex flex-wrap items-center gap-2 text-xs font-bold text-slate-600">
+            <span>
+              ⛏ {activity.mintsLast30m} mints/30m · {activity.salesLast24h} sales/24h
+              {activity.avgSalePriceEth24h !== null ? ` · avg Ξ${activity.avgSalePriceEth24h.toFixed(2)}` : ""}
+            </span>
+            <span className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.12em] text-sky-700">OpenSea Events live</span>
+          </p>
+        ) : null}
       </div>
       <span className={`w-fit rounded-full border px-3 py-1 text-xs font-black uppercase tracking-[0.12em] ${tone}`}>{candidate.signal} · {candidate.score}</span>
     </article>

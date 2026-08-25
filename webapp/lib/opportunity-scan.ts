@@ -1,11 +1,25 @@
 import { discoverMint } from "./mint-discovery";
 import type { MintDiscoveryResponse } from "./mint-types";
+import { fetchOpenSeaEventsActivity, type OpenSeaEventsActivitySnapshot } from "./opensea-events-activity";
 
 export type OpportunitySignal = "ready" | "watch" | "blocked";
 
 export interface OpportunityWatchItem {
   query: string;
   chain?: string;
+}
+
+export interface OpportunityActivity {
+  source: "opensea-events-v2";
+  status: OpenSeaEventsActivitySnapshot["status"];
+  error?: string;
+  fetchedAt: string;
+  mintsLast30m: number;
+  mintsLast24h: number;
+  salesLast24h: number;
+  avgSalePriceEth24h: number | null;
+  listingsLast24h: number;
+  lastMintAt: string | null;
 }
 
 export interface OpportunityCandidate {
@@ -20,6 +34,7 @@ export interface OpportunityCandidate {
   warnings: string[];
   openStageCount: number;
   executableStageCount: number;
+  activity?: OpportunityActivity;
 }
 
 export interface OpportunityScanResult {
@@ -37,8 +52,14 @@ export interface OpportunityScanResult {
   errors: { query: string; error: string }[];
 }
 
-export async function runOpportunityScan(input: { items: OpportunityWatchItem[]; now?: Date; discoverer?: (query: string, chain?: string) => Promise<MintDiscoveryResponse> }): Promise<OpportunityScanResult> {
+export async function runOpportunityScan(input: {
+  items: OpportunityWatchItem[];
+  now?: Date;
+  discoverer?: (query: string, chain?: string) => Promise<MintDiscoveryResponse>;
+  activityFetcher?: (slug: string) => Promise<OpenSeaEventsActivitySnapshot>;
+}): Promise<OpportunityScanResult> {
   const discoverer = input.discoverer ?? discoverMint;
+  const activityFetcher = input.activityFetcher ?? ((slug: string) => fetchOpenSeaEventsActivity({ slug }));
   const items = sanitizeItems(input.items).slice(0, 8);
   const candidates: OpportunityCandidate[] = [];
   const errors: { query: string; error: string }[] = [];
@@ -46,7 +67,7 @@ export async function runOpportunityScan(input: { items: OpportunityWatchItem[];
   for (const item of items) {
     try {
       const discovery = await discoverer(item.query, item.chain);
-      candidates.push(scoreDiscovery(discovery));
+      candidates.push(await withLiveActivity(scoreDiscovery(discovery), discovery.collection.slug, activityFetcher));
     } catch (error) {
       errors.push({ query: item.query, error: safeMessageOf(error) });
     }
@@ -87,6 +108,32 @@ export function scoreDiscovery(discovery: MintDiscoveryResponse): OpportunityCan
     openStageCount: openStages.length,
     executableStageCount: executableStages.length,
   };
+}
+
+export function applyActivityBoost(candidate: OpportunityCandidate, snapshot: OpenSeaEventsActivitySnapshot): OpportunityCandidate {
+  const activity: OpportunityActivity = {
+    source: snapshot.source,
+    status: snapshot.status,
+    ...(snapshot.error ? { error: snapshot.error } : {}),
+    fetchedAt: snapshot.fetchedAt,
+    ...snapshot.metrics,
+  };
+  let score = candidate.score;
+  if (snapshot.status === "live") {
+    if (snapshot.metrics.mintsLast30m > 0) score += 10;
+    if (snapshot.metrics.salesLast24h > 3) score += 5;
+  }
+  return { ...candidate, score: Math.min(100, score), activity };
+}
+
+async function withLiveActivity(candidate: OpportunityCandidate, slug: string | undefined, activityFetcher: (slug: string) => Promise<OpenSeaEventsActivitySnapshot>): Promise<OpportunityCandidate> {
+  if (!slug) return candidate;
+  try {
+    return applyActivityBoost(candidate, await activityFetcher(slug));
+  } catch {
+    // Activity is a best-effort enrichment; keep the candidate on any upstream failure.
+    return candidate;
+  }
 }
 
 function sanitizeItems(items: OpportunityWatchItem[]): OpportunityWatchItem[] {
