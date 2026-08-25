@@ -371,40 +371,53 @@ export default function MintConsole({ embedded = false }: { embedded?: boolean }
           <div ref={reviewRef} className="scroll-mt-6 grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
             <section className="flex flex-col gap-6">
               <CollectionPanel discovery={discovery} />
-              <ScheduleControls
-                drainAddress={drainAddress}
-                exportLoading={exportLoading}
-                exportStatus={exportStatus}
-                gasLimit={gasLimit}
-                localCommand={localCommand}
-                maxFeeGwei={maxFeeGwei}
-                finalProductControls={finalProductControls}
-                maxSpendReady={maxSpendReady}
-                concurrencyReady={concurrencyReady}
-                readinessItems={readinessItems}
-                scheduleBlocked={scheduleBlocked}
-                selectedStageCount={selectedStageCount}
-                selectedTransactionCount={selectedTransactionCount}
-                totals={totals}
-                walletCapacity={walletCapacity}
-                walletCount={walletCount}
-                walletWarning={walletWarning}
-                onDrainAddress={setDrainAddress}
-                onExportCopy={() => handleExport("copy")}
-                onExportDownload={() => handleExport("download")}
-                onGasLimit={setGasLimit}
-                onLocalCommandCopy={handleCopyLocalCommand}
-                onMaxFee={setMaxFeeGwei}
-                onTargetChain={setTargetChainKey}
-                onRpcStatus={setRpcStatus}
-                onMaxSpend={setMaxSpendEth}
-                onConcurrency={setConcurrency}
-                onSchedule={handleSchedule}
-                onWalletCount={setWalletCount}
-                scheduleLoading={scheduleLoading}
-              />
-              {schedule ? <ScheduleReceipt schedule={schedule} /> : null}
-              <BrowserBroadcastPanel collection={discovery.collection} stages={discovery.stages} quantities={quantities} walletCount={walletCount} />
+              <BrowserBroadcastPanel collection={discovery.collection} stages={discovery.stages} quantities={quantities} />
+
+              <details className="group rounded-[2rem] border border-[color:var(--compas-line)] bg-[color:var(--compas-card)] shadow-sm">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-4 rounded-[2rem] px-5 py-4 marker:content-none">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.24em] text-[color:var(--compas-muted)]">Advanced</p>
+                    <h2 className="mt-1 text-lg font-black text-[color:var(--compas-ink)]">CLI mode · RunConfig export</h2>
+                    <p className="mt-1 text-sm font-semibold text-[color:var(--compas-muted)]">Optional local CLI workflow for advanced multi-wallet operators.</p>
+                  </div>
+                  <span className="rounded-xl border border-[color:var(--compas-line)] px-3 py-2 text-xs font-black text-[color:var(--compas-ink)] group-open:rotate-180">⌄</span>
+                </summary>
+                <div className="border-t border-[color:var(--compas-line)] p-3 sm:p-4">
+                  <ScheduleControls
+                    drainAddress={drainAddress}
+                    exportLoading={exportLoading}
+                    exportStatus={exportStatus}
+                    gasLimit={gasLimit}
+                    localCommand={localCommand}
+                    maxFeeGwei={maxFeeGwei}
+                    finalProductControls={finalProductControls}
+                    maxSpendReady={maxSpendReady}
+                    concurrencyReady={concurrencyReady}
+                    readinessItems={readinessItems}
+                    scheduleBlocked={scheduleBlocked}
+                    selectedStageCount={selectedStageCount}
+                    selectedTransactionCount={selectedTransactionCount}
+                    totals={totals}
+                    walletCapacity={walletCapacity}
+                    walletCount={walletCount}
+                    walletWarning={walletWarning}
+                    onDrainAddress={setDrainAddress}
+                    onExportCopy={() => handleExport("copy")}
+                    onExportDownload={() => handleExport("download")}
+                    onGasLimit={setGasLimit}
+                    onLocalCommandCopy={handleCopyLocalCommand}
+                    onMaxFee={setMaxFeeGwei}
+                    onTargetChain={setTargetChainKey}
+                    onRpcStatus={setRpcStatus}
+                    onMaxSpend={setMaxSpendEth}
+                    onConcurrency={setConcurrency}
+                    onSchedule={handleSchedule}
+                    onWalletCount={setWalletCount}
+                    scheduleLoading={scheduleLoading}
+                  />
+                  {schedule ? <ScheduleReceipt schedule={schedule} /> : null}
+                </div>
+              </details>
             </section>
 
             <section className="grid gap-4 md:grid-cols-2">

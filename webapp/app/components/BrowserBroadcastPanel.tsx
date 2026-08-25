@@ -35,11 +35,11 @@ type BrowserBroadcastPanelProps = {
   collection: CollectionCard;
   stages: MintStage[];
   quantities: Record<StageKind, number>;
-  walletCount: number;
 };
 
-export default function BrowserBroadcastPanel({ collection, quantities, stages, walletCount }: BrowserBroadcastPanelProps) {
+export default function BrowserBroadcastPanel({ collection, quantities, stages }: BrowserBroadcastPanelProps) {
   const [vault, setVault] = useState<LaunchVaultPayload | null>(null);
+  const [browserWalletCount, setBrowserWalletCount] = useState(1);
   const [encryptedBackup] = useState<EncryptedLaunchVaultBackup | null>(() => readStoredVaultBackup());
   const [unlockPassphrase, setUnlockPassphrase] = useState("");
   const [chainKey, setChainKey] = useState<BrowserBroadcastChainKey>(() => defaultChainKey(collection.chain.key));
@@ -120,6 +120,7 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages, 
     try {
       const payload = await decryptLaunchVaultBackup(encryptedBackup, unlockPassphrase);
       setVault(payload);
+      setBrowserWalletCount(Math.max(1, payload.wallets.length));
       setUnlockPassphrase("");
       setNotice("Vault unlocked in memory. Private keys are not displayed and no server API receives them.");
     } catch {
@@ -136,7 +137,7 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages, 
         chainKey,
         collectionAddress: collection.address,
         stages: selectedStages,
-        walletCount,
+        walletCount: browserWalletCount,
         vault: unlockedVault,
         rpcUrl,
         seaDropAddress,
@@ -161,7 +162,7 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages, 
           chainKey,
           collectionAddress: collection.address,
           stages: selectedStages,
-          walletCount,
+          walletCount: browserWalletCount,
           vault: unlockedVault,
           rpcUrl,
           seaDropAddress,
@@ -329,10 +330,23 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages, 
             </div>
           </div>
 
-          <div className="mt-4 grid gap-2 text-sm font-semibold sm:grid-cols-3">
-            <Metric label="Executable stages" value={executableStageCount} />
-            <Metric label="Wallets requested" value={Math.min(walletCount, vault?.wallets.length ?? 0)} />
-            <Metric label="Failures" value={failedCount} />
+          <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_2fr]">
+            <label className="grid gap-2 text-xs font-black uppercase tracking-[0.18em] text-slate-500">
+              Burners used
+              <input
+                type="number"
+                min={1}
+                max={Math.max(1, vault?.wallets.length ?? 1)}
+                value={browserWalletCount}
+                onChange={(event) => setBrowserWalletCount(Math.min(Math.max(1, Number(event.target.value) || 1), Math.max(1, vault?.wallets.length ?? 1)))}
+                className={FIELD}
+              />
+            </label>
+            <div className="grid gap-2 text-sm font-semibold sm:grid-cols-3">
+              <Metric label="Executable stages" value={executableStageCount} />
+              <Metric label="Burners ready" value={Math.min(browserWalletCount, vault?.wallets.length ?? 0)} />
+              <Metric label="Failures" value={failedCount} />
+            </div>
           </div>
 
           <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
