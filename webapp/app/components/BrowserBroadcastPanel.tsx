@@ -487,7 +487,7 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages }
 
       {broadcastOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="broadcast-title">
-          <div className="w-full max-w-2xl rounded-[2rem] border border-red-200 bg-white p-5 shadow-2xl shadow-slate-950/25">
+          <div className="max-h-[calc(100dvh-3rem)] w-full max-w-2xl overflow-y-auto overscroll-contain rounded-[2rem] border border-red-200 bg-white p-5 shadow-2xl shadow-slate-950/25">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.24em] text-red-600">Explicit broadcast</p>
@@ -501,7 +501,13 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages }
               <p><span className="block uppercase tracking-[0.14em] text-slate-400">Chain</span>{chain.name} · {chain.chainId}</p>
               <p><span className="block uppercase tracking-[0.14em] text-slate-400">Maximum spend</span>{maxTotalEth} ETH mint cap · {formatEther(activeTotalValueWei)} ETH reviewed</p>
               <p><span className="block uppercase tracking-[0.14em] text-slate-400">Verified recipient</span>{recipientMode === "holder" && holderSession ? maskVaultAddress(holderSession.address) : recipientMode === "custom" ? maskVaultAddress(customRecipientAddress) : "payer wallets"}</p>
-              <p className="sm:col-span-2"><span className="block uppercase tracking-[0.14em] text-slate-400">Burner payers</span>{activeTransactions.map((tx) => `${tx.walletAlias} (${maskVaultAddress(tx.walletAddress)})`).join(", ")}</p>
+              <BroadcastPayerSummary
+                payers={activeTransactions.map((tx) => ({
+                  id: `${tx.binding}:${tx.id}`,
+                  alias: tx.walletAlias,
+                  address: tx.walletAddress,
+                }))}
+              />
             </div>
             <label className="mt-5 flex gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-800">
               <input type="checkbox" checked={broadcastConsent} onChange={(event) => setBroadcastConsent(event.target.checked)} className="mt-1" />
@@ -514,6 +520,26 @@ export default function BrowserBroadcastPanel({ collection, quantities, stages }
         </div>
       ) : null}
     </section>
+  );
+}
+
+export function BroadcastPayerSummary({
+  payers,
+}: {
+  payers: Array<{ id: string; alias: string; address: string }>;
+}) {
+  return (
+    <div className="sm:col-span-2">
+      <p className="uppercase tracking-[0.14em] text-slate-400">{payers.length} burner payers</p>
+      <ul className="mt-2 grid gap-1 sm:grid-cols-2">
+        {payers.map((payer) => (
+          <li key={payer.id} className="min-w-0 rounded-xl border border-slate-200 bg-white px-2 py-1.5">
+            <span className="block truncate font-black text-slate-800">{payer.alias}</span>
+            <span className="block font-mono text-slate-500">{maskVaultAddress(payer.address)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

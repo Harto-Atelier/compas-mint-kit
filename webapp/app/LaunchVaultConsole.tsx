@@ -28,10 +28,12 @@ import {
 } from "@/lib/burner-generation";
 import {
   MAX_LAUNCH_VAULT_BACKUP_BYTES,
-  RESTORE_REPLACE_CONFIRMATION,
   assertLaunchVaultBackupFileSize,
+  authenticateLaunchVaultBackupRestore,
+  commitAuthenticatedLaunchVaultRestore,
+  expectedLaunchVaultRestoreConfirmation,
   parseLaunchVaultBackupRestore,
-  prepareLaunchVaultBackupRestore,
+  type AuthenticatedLaunchVaultRestore,
 } from "@/lib/launch-vault-backup-restore";
 
 const FIELD =
@@ -60,6 +62,8 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
   const [restoreText, setRestoreText] = useState("");
   const [restoreFileName, setRestoreFileName] = useState<string | null>(null);
   const [restoreFileInputKey, setRestoreFileInputKey] = useState(0);
+  const [restorePassphrase, setRestorePassphrase] = useState("");
+  const [authenticatedRestore, setAuthenticatedRestore] = useState<AuthenticatedLaunchVaultRestore | null>(null);
   const [replaceConfirmation, setReplaceConfirmation] = useState("");
 
   const [burnerCount, setBurnerCount] = useState("1");
@@ -278,6 +282,9 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
     resetMessages();
     setRestoreText("");
     setRestoreFileName(null);
+    setRestorePassphrase("");
+    setAuthenticatedRestore(null);
+    setReplaceConfirmation("");
     if (!file) return;
 
     try {
@@ -286,22 +293,60 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
       const validatedBackup = parseLaunchVaultBackupRestore(raw);
       setRestoreText(serializeEncryptedLaunchVaultBackup(validatedBackup));
       setRestoreFileName(file.name);
-      setNotice("Encrypted backup file validated locally. Restore it to save the ciphertext envelope; unlocking remains a separate step.");
+      setNotice("Encrypted envelope parsed and canonicalized locally. Enter the candidate passphrase to authenticate and inspect its public summary before any storage change.");
     } catch (err) {
       setRestoreFileInputKey((current) => current + 1);
       setError(err instanceof Error ? err.message : "Could not read the encrypted launch vault backup.");
     }
   }
 
-  function handleRestoreBackup(event: FormEvent<HTMLFormElement>) {
+  async function handleAuthenticateRestore(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     resetMessages();
+    setBusy("Authenticating encrypted backup locally…");
 
     try {
-      const hasStoredBackup = window.localStorage.getItem(LAUNCH_VAULT_STORAGE_KEY) !== null;
-      setStorageOccupied(hasStoredBackup);
-      const restoredBackup = prepareLaunchVaultBackupRestore(restoreText, hasStoredBackup, replaceConfirmation);
-      persistBackup(restoredBackup);
+      const canonicalCandidate = serializeEncryptedLaunchVaultBackup(parseLaunchVaultBackupRestore(restoreText));
+      setRestoreText(canonicalCandidate);
+      const storageSnapshot = window.localStorage.getItem(LAUNCH_VAULT_STORAGE_KEY);
+      const prepared = await authenticateLaunchVaultBackupRestore({
+        raw: canonicalCandidate,
+        candidatePassphrase: restorePassphrase,
+        storageSnapshot,
+        existingVault: storageSnapshot === null || !encryptedBackup || !vault
+          ? null
+          : { encryptedBackup, payload: vault },
+      });
+      setRestoreText(prepared.canonicalSerialized);
+      setAuthenticatedRestore(prepared);
+      setRestorePassphrase("");
+      setReplaceConfirmation("");
+      setNotice("Backup authenticated and deep-validated locally. Review the public-only summary before committing the replacement.");
+    } catch (err) {
+      setRestorePassphrase("");
+      setAuthenticatedRestore(null);
+      setError(err instanceof Error ? err.message : "Could not authenticate the encrypted launch vault backup.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function handleCommitRestore(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    resetMessages();
+    if (!authenticatedRestore) {
+      setError("Authenticate the candidate backup before restoring it.");
+      return;
+    }
+
+    try {
+      const restoredBackup = commitAuthenticatedLaunchVaultRestore({
+        prepared: authenticatedRestore,
+        confirmation: replaceConfirmation,
+        storage: window.localStorage,
+      });
+      setEncryptedBackup(restoredBackup);
+      setStorageOccupied(true);
       setVault(null);
       setCreatePassphrase("");
       setCreateConfirm("");
@@ -311,9 +356,9 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
       setSealPassphrase("");
       setWipePhrase("");
       clearRestoreTransientState();
-      setNotice("Encrypted backup restored and left locked. Enter its passphrase in the separate unlock form when you are ready.");
+      setNotice("Authenticated encrypted backup restored and left locked. Enter its passphrase in the separate unlock form when you are ready.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not restore the encrypted launch vault backup.");
+      setError(err instanceof Error ? err.message : "Could not commit the authenticated launch vault backup.");
     }
   }
 
@@ -354,6 +399,8 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
   function clearRestoreTransientState() {
     setRestoreText("");
     setRestoreFileName(null);
+    setRestorePassphrase("");
+    setAuthenticatedRestore(null);
     setReplaceConfirmation("");
     setRestoreFileInputKey((current) => current + 1);
     setUnlockPassphrase("");
@@ -401,18 +448,25 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
             )}
 
             <RestoreBackupPanel
+              authenticatedRestore={authenticatedRestore}
               fileInputKey={restoreFileInputKey}
               hasVault={storageOccupied}
               replaceConfirmation={replaceConfirmation}
               restoreFileName={restoreFileName}
+              restorePassphrase={restorePassphrase}
               restoreText={restoreText}
+              onAuthenticate={handleAuthenticateRestore}
+              onCommit={handleCommitRestore}
               onFile={handleRestoreFile}
               onReplaceConfirmation={setReplaceConfirmation}
+              onRestorePassphrase={setRestorePassphrase}
               onRestoreText={(value) => {
                 setRestoreText(value);
                 setRestoreFileName(null);
+                setRestorePassphrase("");
+                setAuthenticatedRestore(null);
+                setReplaceConfirmation("");
               }}
-              onSubmit={handleRestoreBackup}
             />
 
             <DangerPanel confirmation={wipeConfirmation} hasVault={Boolean(encryptedBackup)} wipePhrase={wipePhrase} onWipePhrase={setWipePhrase} onWipe={handleWipeVault} />
@@ -630,83 +684,135 @@ function UnlockedVaultPanel({
 }
 
 export function RestoreBackupPanel({
+  authenticatedRestore,
   fileInputKey,
   hasVault,
   replaceConfirmation,
   restoreFileName,
+  restorePassphrase,
   restoreText,
+  onAuthenticate,
+  onCommit,
   onFile,
   onReplaceConfirmation,
+  onRestorePassphrase,
   onRestoreText,
-  onSubmit,
 }: {
+  authenticatedRestore: AuthenticatedLaunchVaultRestore | null;
   fileInputKey: number;
   hasVault: boolean;
   replaceConfirmation: string;
   restoreFileName: string | null;
+  restorePassphrase: string;
   restoreText: string;
+  onAuthenticate: (event: FormEvent<HTMLFormElement>) => void;
+  onCommit: (event: FormEvent<HTMLFormElement>) => void;
   onFile: (file: File | null) => void;
   onReplaceConfirmation: (value: string) => void;
+  onRestorePassphrase: (value: string) => void;
   onRestoreText: (value: string) => void;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  const replacementConfirmation = authenticatedRestore
+    ? expectedLaunchVaultRestoreConfirmation(authenticatedRestore)
+    : null;
+
   return (
     <details className={CARD}>
       <summary className="cursor-pointer list-none text-sm font-black text-violet-700">
         Advanced · restore encrypted backup
         <span className="mt-1 block text-xs font-semibold leading-5 text-slate-500">
-          Import a ciphertext-only Compas Vault envelope from a local JSON file or pasted JSON.
+          Authenticate, inspect, then transactionally commit a ciphertext-only Compas Vault backup.
         </span>
       </summary>
-      <form onSubmit={onSubmit} className="mt-5 border-t border-violet-100 pt-5">
-        <p className="text-sm font-semibold leading-6 text-slate-500">
-          Validation and storage happen only in this browser. Restore does not unlock the Vault; the separate unlock form asks for the passphrase afterward. Maximum size: {MAX_LAUNCH_VAULT_BACKUP_BYTES / 1024 / 1024} MB.
-        </p>
+      {!authenticatedRestore ? (
+        <form onSubmit={onAuthenticate} className="mt-5 border-t border-violet-100 pt-5">
+          <p className="text-sm font-semibold leading-6 text-slate-500">
+            Parsing, AES-GCM authentication, and deep wallet validation happen only in this browser before any storage write. To replace an existing backup, unlock the current Vault first. Maximum size: {MAX_LAUNCH_VAULT_BACKUP_BYTES / 1024 / 1024} MB.
+          </p>
 
-        <label className="mt-4 grid gap-2 text-xs font-black uppercase tracking-[0.18em] text-slate-500">
-          Encrypted backup file
-          <input
-            key={fileInputKey}
-            type="file"
-            accept="application/json,.json"
-            onChange={(event) => onFile(event.target.files?.[0] ?? null)}
-            className="block w-full rounded-2xl border border-violet-100 bg-white/90 px-4 py-3 text-sm font-bold normal-case tracking-normal text-slate-700 file:mr-4 file:rounded-xl file:border-0 file:bg-violet-100 file:px-4 file:py-2 file:font-black file:text-violet-700"
-          />
-        </label>
-        {restoreFileName ? <p className="mt-2 break-all text-xs font-bold text-emerald-700">Validated locally: {restoreFileName}</p> : null}
-
-        <label className="mt-4 grid gap-2 text-xs font-black uppercase tracking-[0.18em] text-slate-500">
-          Encrypted backup JSON
-          <textarea
-            value={restoreText}
-            onChange={(event) => onRestoreText(event.target.value)}
-            rows={7}
-            maxLength={MAX_LAUNCH_VAULT_BACKUP_BYTES}
-            spellCheck={false}
-            autoComplete="off"
-            placeholder='{"kind":"compas-launch-vault",…}'
-            required
-            className={`${TEXTAREA} font-mono normal-case tracking-normal`}
-          />
-        </label>
-
-        {hasVault ? (
-          <label className="mt-4 grid gap-2 text-xs font-black uppercase tracking-[0.18em] text-amber-700">
-            Type {RESTORE_REPLACE_CONFIRMATION}
+          <label className="mt-4 grid gap-2 text-xs font-black uppercase tracking-[0.18em] text-slate-500">
+            Encrypted backup file
             <input
-              value={replaceConfirmation}
-              onChange={(event) => onReplaceConfirmation(event.target.value)}
-              autoComplete="off"
-              required
-              className={`${FIELD} border-amber-200 focus:border-amber-300 focus:ring-amber-100`}
+              key={fileInputKey}
+              type="file"
+              accept="application/json,.json"
+              onChange={(event) => onFile(event.target.files?.[0] ?? null)}
+              className="block w-full rounded-2xl border border-violet-100 bg-white/90 px-4 py-3 text-sm font-bold normal-case tracking-normal text-slate-700 file:mr-4 file:rounded-xl file:border-0 file:bg-violet-100 file:px-4 file:py-2 file:font-black file:text-violet-700"
             />
           </label>
-        ) : null}
+          {restoreFileName ? <p className="mt-2 break-all text-xs font-bold text-emerald-700">Parsed + canonicalized locally: {restoreFileName}</p> : null}
 
-        <button type="submit" className="mt-5 h-12 w-full rounded-2xl border border-violet-200 bg-white px-5 font-black text-violet-700 transition hover:bg-violet-50">
-          {hasVault ? "Validate + replace encrypted Vault" : "Validate + restore encrypted Vault"}
-        </button>
-      </form>
+          <label className="mt-4 grid gap-2 text-xs font-black uppercase tracking-[0.18em] text-slate-500">
+            Encrypted backup JSON
+            <textarea
+              value={restoreText}
+              onChange={(event) => onRestoreText(event.target.value)}
+              rows={7}
+              maxLength={MAX_LAUNCH_VAULT_BACKUP_BYTES}
+              spellCheck={false}
+              autoComplete="off"
+              placeholder='{"kind":"compas-launch-vault",…}'
+              required
+              className={`${TEXTAREA} font-mono normal-case tracking-normal`}
+            />
+          </label>
+
+          <label className="mt-4 grid gap-2 text-xs font-black uppercase tracking-[0.18em] text-slate-500">
+            Candidate passphrase
+            <input
+              value={restorePassphrase}
+              onChange={(event) => onRestorePassphrase(event.target.value)}
+              minLength={12}
+              type="password"
+              autoComplete="current-password"
+              required
+              className={FIELD}
+            />
+          </label>
+
+          <button type="submit" className="mt-5 h-12 w-full rounded-2xl border border-violet-200 bg-white px-5 font-black text-violet-700 transition hover:bg-violet-50">
+            Authenticate backup locally
+          </button>
+        </form>
+      ) : (
+        <form onSubmit={onCommit} className="mt-5 border-t border-violet-100 pt-5">
+          <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-900">
+            <p className="text-xs font-black uppercase tracking-[0.2em] text-emerald-700">Authenticated backup summary</p>
+            <h3 className="mt-2 text-xl font-black text-slate-950">{authenticatedRestore.summary.launchName}</h3>
+            <p className="mt-1 font-mono text-xs font-bold text-slate-600">{authenticatedRestore.summary.launchId}</p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+              <InfoTile label="Wallets" value={`${authenticatedRestore.summary.walletCount} wallets`} />
+              <InfoTile label="Created" value={formatVaultTimestamp(authenticatedRestore.summary.createdAt)} />
+              <InfoTile label="Updated" value={formatVaultTimestamp(authenticatedRestore.summary.updatedAt)} />
+            </div>
+            <div className="mt-3 rounded-2xl border border-emerald-100 bg-white/80 p-3">
+              <p className="text-xs font-black uppercase tracking-[0.16em] text-emerald-700">Masked addresses</p>
+              {authenticatedRestore.summary.maskedAddresses.length > 0 ? (
+                <ul className="mt-2 grid gap-1 font-mono text-xs font-bold text-slate-600 sm:grid-cols-2">
+                  {authenticatedRestore.summary.maskedAddresses.map((address, index) => <li key={`${address}-${index}`}>{address}</li>)}
+                </ul>
+              ) : <p className="mt-2 text-xs font-bold text-slate-500">No wallets in this Vault.</p>}
+            </div>
+          </div>
+
+          {authenticatedRestore.replacesExisting ? (
+            <label className="mt-4 grid gap-2 text-xs font-black uppercase tracking-[0.18em] text-amber-700">
+              Type {replacementConfirmation}
+              <input
+                value={replaceConfirmation}
+                onChange={(event) => onReplaceConfirmation(event.target.value)}
+                autoComplete="off"
+                required
+                className={`${FIELD} border-amber-200 focus:border-amber-300 focus:ring-amber-100`}
+              />
+            </label>
+          ) : null}
+
+          <button type="submit" className="mt-5 h-12 w-full rounded-2xl bg-violet-600 px-5 font-black text-white transition hover:bg-violet-500">
+            {hasVault ? "Replace with authenticated backup" : "Restore authenticated backup"}
+          </button>
+        </form>
+      )}
     </details>
   );
 }

@@ -5,10 +5,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { BurnerGenerationPanel, ImportWalletPanel, RestoreBackupPanel } from "../app/LaunchVaultConsole";
 import {
   MAX_LAUNCH_VAULT_BACKUP_BYTES,
-  RESTORE_REPLACE_CONFIRMATION,
   assertLaunchVaultBackupFileSize,
   parseLaunchVaultBackupRestore,
-  prepareLaunchVaultBackupRestore,
+  type AuthenticatedLaunchVaultRestore,
 } from "./launch-vault-backup-restore";
 
 const noop = () => undefined;
@@ -28,6 +27,25 @@ const validEncryptedBackup = JSON.stringify({
   },
   ciphertext: "AAAAAAAAAAAAAAAAAAAAAAA=",
 });
+
+function restorePanel(overrides: Partial<Parameters<typeof RestoreBackupPanel>[0]> = {}) {
+  return RestoreBackupPanel({
+    authenticatedRestore: null,
+    fileInputKey: 0,
+    hasVault: true,
+    replaceConfirmation: "",
+    restoreFileName: null,
+    restorePassphrase: "",
+    restoreText: "",
+    onAuthenticate: noop,
+    onCommit: noop,
+    onFile: noop,
+    onReplaceConfirmation: noop,
+    onRestorePassphrase: noop,
+    onRestoreText: noop,
+    ...overrides,
+  });
+}
 
 test("Vault renders bounded burner generation as the primary local key path", () => {
   const markup = renderToStaticMarkup(
@@ -73,32 +91,51 @@ test("existing private-key import remains inside Advanced", () => {
   assert.match(markup, /Private key/);
 });
 
-test("encrypted backup restore is an Advanced client-only file or JSON workflow", () => {
-  const markup = renderToStaticMarkup(
-    RestoreBackupPanel({
-      fileInputKey: 0,
-      hasVault: true,
-      replaceConfirmation: "",
-      restoreFileName: null,
-      restoreText: "",
-      onFile: noop,
-      onReplaceConfirmation: noop,
-      onRestoreText: noop,
-      onSubmit: noop,
-    }),
-  );
+test("restore first requires local candidate authentication and does not show replacement controls early", () => {
+  const markup = renderToStaticMarkup(restorePanel());
 
   assert.match(markup, /^<details/);
   assert.match(markup, /Advanced · restore encrypted backup/);
   assert.match(markup, /type="file"/);
   assert.match(markup, /accept="application\/json,.json"/);
   assert.match(markup, /Encrypted backup JSON/);
-  assert.match(markup, /Type REPLACE VAULT/);
-  assert.doesNotMatch(markup, /Passphrase/);
+  assert.match(markup, /Candidate passphrase/);
+  assert.match(markup, /Authenticate backup locally/);
+  assert.doesNotMatch(markup, /Type REPLACE/);
   assert.doesNotMatch(markup, /Private key/);
 });
 
-test("restore parsing validates encrypted envelopes and rejects malformed or oversized input", () => {
+test("authenticated restore shows a public-only candidate summary before candidate-specific replacement", () => {
+  const backup = parseLaunchVaultBackupRestore(validEncryptedBackup);
+  const authenticatedRestore: AuthenticatedLaunchVaultRestore = {
+    backup,
+    canonicalSerialized: `${JSON.stringify(backup, null, 2)}\n`,
+    storageSnapshot: "existing bytes",
+    replacesExisting: true,
+    summary: {
+      launchId: "launch-candidate",
+      launchName: "Candidate launch",
+      walletCount: 2,
+      maskedAddresses: ["0x1234…abcd", "0xabcd…1234"],
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_001_000,
+    },
+  };
+  const markup = renderToStaticMarkup(restorePanel({ authenticatedRestore }));
+
+  assert.match(markup, /Authenticated backup summary/);
+  assert.match(markup, /Candidate launch/);
+  assert.match(markup, /launch-candidate/);
+  assert.match(markup, /2 wallets/);
+  assert.match(markup, /0x1234…abcd/);
+  assert.match(markup, /Created/);
+  assert.match(markup, /Updated/);
+  assert.match(markup, /Type REPLACE launch-candidate/);
+  assert.match(markup, /Replace with authenticated backup/);
+  assert.doesNotMatch(markup, /Candidate passphrase/);
+});
+
+test("restore parsing validates encrypted envelopes, canonicalizes, and rejects malformed or oversized input", () => {
   assert.equal(parseLaunchVaultBackupRestore(validEncryptedBackup).kind, "compas-launch-vault");
   assert.throws(() => parseLaunchVaultBackupRestore("{bad-json"));
   assert.throws(() => parseLaunchVaultBackupRestore(JSON.stringify({ kind: "plaintext", privateKey: "0xsecret" })));
@@ -106,43 +143,26 @@ test("restore parsing validates encrypted envelopes and rejects malformed or ove
   assert.throws(() => assertLaunchVaultBackupFileSize(MAX_LAUNCH_VAULT_BACKUP_BYTES + 1), /too large/i);
 });
 
-test("restore strips every non-envelope field and requires exact confirmation before replacement", () => {
-  const withInjectedPlaintext = JSON.stringify({
-    ...JSON.parse(validEncryptedBackup),
-    plaintext: { privateKey: "0xsecret" },
-    passphrase: "do-not-store",
-  });
-
-  const sanitized = parseLaunchVaultBackupRestore(withInjectedPlaintext);
-  assert.equal(JSON.stringify(sanitized).includes("plaintext"), false);
-  assert.equal(JSON.stringify(sanitized).includes("privateKey"), false);
-  assert.equal(JSON.stringify(sanitized).includes("passphrase"), false);
-  assert.throws(
-    () => prepareLaunchVaultBackupRestore(withInjectedPlaintext, true, "replace vault"),
-    /REPLACE VAULT/,
-  );
-  assert.equal(
-    prepareLaunchVaultBackupRestore(withInjectedPlaintext, true, RESTORE_REPLACE_CONFIRMATION).ciphertext,
-    sanitized.ciphertext,
-  );
-});
-
-test("restore stores only the validated encrypted envelope and never decrypts, fetches, or logs", () => {
+test("restore orchestration canonicalizes pasted JSON before authentication, clears passphrases, and writes only through the transactional commit", () => {
   assert.match(consoleSource, /const validatedBackup = parseLaunchVaultBackupRestore\(raw\)/);
   assert.match(consoleSource, /setRestoreText\(serializeEncryptedLaunchVaultBackup\(validatedBackup\)\)/);
   assert.doesNotMatch(consoleSource, /setRestoreText\(raw\)/);
-  assert.match(consoleSource, /const hasStoredBackup = window\.localStorage\.getItem\(LAUNCH_VAULT_STORAGE_KEY\) !== null/);
-  assert.match(consoleSource, /prepareLaunchVaultBackupRestore\(restoreText, hasStoredBackup, replaceConfirmation\)/);
-  assert.match(consoleSource, /hasVault=\{storageOccupied\}/);
-  assert.match(consoleSource, /persistBackup\(restoredBackup\)/);
-  assert.match(restoreSource, /confirmation !== RESTORE_REPLACE_CONFIRMATION/);
-  assert.doesNotMatch(restoreSource, /decryptLaunchVaultBackup|privateKey|console\.|fetch\s*\(/);
+  assert.match(consoleSource, /handleAuthenticateRestore[\s\S]{0,700}const canonicalCandidate = serializeEncryptedLaunchVaultBackup\(parseLaunchVaultBackupRestore\(restoreText\)\)[\s\S]{0,200}setRestoreText\(canonicalCandidate\)/);
+  assert.match(consoleSource, /authenticateLaunchVaultBackupRestore\(/);
+  assert.match(consoleSource, /raw: canonicalCandidate/);
+  assert.match(consoleSource, /candidatePassphrase: restorePassphrase/);
+  assert.match(consoleSource, /setRestorePassphrase\(""\)/);
+  assert.match(consoleSource, /commitAuthenticatedLaunchVaultRestore\(/);
+  assert.match(consoleSource, /storage: window\.localStorage/);
+  assert.doesNotMatch(consoleSource, /persistBackup\(restoredBackup\)/);
+  assert.doesNotMatch(restoreSource, /console\.|fetch\s*\(/);
   assert.doesNotMatch(consoleSource, /fetch\s*\(/);
 });
 
 test("restore transient state is cleared after success, lock, and wipe", () => {
   assert.equal((consoleSource.match(/clearRestoreTransientState\(\)/g) ?? []).length >= 3, true);
   assert.match(consoleSource, /setUnlockPassphrase\(""\)/);
-  assert.match(consoleSource, /setError\(null\)/);
+  assert.match(consoleSource, /setRestorePassphrase\(""\)/);
+  assert.match(consoleSource, /setAuthenticatedRestore\(null\)/);
   assert.match(consoleSource, /window\.localStorage\.removeItem\(LAUNCH_VAULT_STORAGE_KEY\)[\s\S]{0,700}setCreatePassphrase\(""\)[\s\S]{0,200}setCreateConfirm\(""\)/);
 });
