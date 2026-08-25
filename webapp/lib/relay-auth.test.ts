@@ -11,6 +11,9 @@ import {
 const SECRET = "test-relay-auth-secret-with-enough-entropy";
 const HOLDER = "0xED346CEF754407662144336Fd2835d3600168d1f";
 const NOW = 1_900_000_000_000;
+const HASH_A = `0x${"a".repeat(64)}`;
+const HASH_B = `0x${"b".repeat(64)}`;
+const PLAN_BINDING = `0x${"c".repeat(64)}`;
 
 function token(overrides: Partial<Parameters<typeof issueRelayAuthToken>[0]> = {}) {
   return issueRelayAuthToken(
@@ -20,6 +23,8 @@ function token(overrides: Partial<Parameters<typeof issueRelayAuthToken>[0]> = {
       chainId: 1,
       maxTransactionCount: 2,
       purpose: "broadcast",
+      expectedHashes: [HASH_A, HASH_B],
+      planBinding: PLAN_BINDING,
       ttlMs: 60_000,
       ...overrides,
     },
@@ -35,6 +40,8 @@ test("relay token binds holder, launch, expiry, chain, max tx count, and purpose
   assert.equal(issued.chainId, 1);
   assert.equal(issued.maxTransactionCount, 2);
   assert.equal(issued.purpose, "broadcast");
+  assert.deepEqual(issued.expectedHashes, [HASH_A, HASH_B]);
+  assert.equal(issued.planBinding, PLAN_BINDING);
   assert.equal(issued.expiresAt, NOW + 60_000);
   assert.match(issued.token, /^relay-hmac-v1\.[^.]+\.[^.]+$/);
 
@@ -44,6 +51,8 @@ test("relay token binds holder, launch, expiry, chain, max tx count, and purpose
     expectedPurpose: "broadcast",
     expectedChainId: 1,
     transactionCount: 2,
+    expectedHashes: [HASH_B, HASH_A],
+    expectedPlanBinding: PLAN_BINDING,
     expectedHolderAddress: HOLDER,
     expectedLaunchId: "compas-mainnet-2026",
   });
@@ -105,6 +114,35 @@ test("relay token verification enforces purpose", () => {
   assert.deepEqual(verified, { ok: false, reason: "purpose-mismatch" });
 });
 
+test("relay token verification enforces exact expected hashes and plan binding", () => {
+  assert.deepEqual(verifyRelayAuthToken(token().token, {
+    now: NOW,
+    secret: SECRET,
+    expectedPurpose: "broadcast",
+    expectedChainId: 1,
+    transactionCount: 1,
+    expectedHashes: [HASH_A],
+  }), { ok: false, reason: "hash-mismatch" });
+
+  assert.deepEqual(verifyRelayAuthToken(token().token, {
+    now: NOW,
+    secret: SECRET,
+    expectedPurpose: "broadcast",
+    expectedChainId: 1,
+    transactionCount: 1,
+    expectedHashes: [HASH_A, `0x${"d".repeat(64)}`],
+  }), { ok: false, reason: "hash-mismatch" });
+
+  assert.deepEqual(verifyRelayAuthToken(token().token, {
+    now: NOW,
+    secret: SECRET,
+    expectedPurpose: "broadcast",
+    expectedChainId: 1,
+    transactionCount: 1,
+    expectedPlanBinding: `0x${"e".repeat(64)}`,
+  }), { ok: false, reason: "plan-binding-mismatch" });
+});
+
 test("relay token issuance reads only the server-side relay secret from env", () => {
   const env = process.env as Record<string, string | undefined>;
   const previous = env.COMPAS_RELAY_AUTH_SECRET;
@@ -116,6 +154,8 @@ test("relay token issuance reads only the server-side relay secret from env", ()
       chainId: 1,
       maxTransactionCount: 1,
       purpose: "arm",
+      expectedHashes: [HASH_A],
+      planBinding: PLAN_BINDING,
     }, { now: NOW });
     assert.equal(issued.purpose, "arm");
     assert.equal(verifyRelayAuthToken(issued.token, {
@@ -144,6 +184,8 @@ test("relay token issuance and verification fail closed in production when the r
           chainId: 1,
           maxTransactionCount: 1,
           purpose: "broadcast",
+          expectedHashes: [HASH_A],
+          planBinding: PLAN_BINDING,
         },
         NOW,
       ),

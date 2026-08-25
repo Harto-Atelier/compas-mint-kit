@@ -50,6 +50,8 @@ export type RelayAuthIssueInput = {
   chainId: number;
   maxTransactionCount: number;
   purpose: RelayAuthPurpose;
+  expectedHashes: string[];
+  planBinding: string;
   ttlMs?: number;
 };
 
@@ -66,6 +68,8 @@ export type RelayAuthPayload = {
   chainId: number;
   maxTransactionCount: number;
   purpose: RelayAuthPurpose;
+  expectedHashes: string[];
+  planBinding: string;
   issuedAt: number;
   expiresAt: number;
   nonce: string;
@@ -83,6 +87,8 @@ export type RelayAuthVerifyOptions = {
   expectedPurpose: RelayAuthPurpose;
   expectedChainId: number;
   transactionCount: number;
+  expectedHashes?: string[];
+  expectedPlanBinding?: string;
   expectedHolderAddress?: string;
   expectedLaunchId?: string;
 };
@@ -97,7 +103,9 @@ export type RelayAuthFailureReason =
   | "purpose-mismatch"
   | "transaction-count-exceeded"
   | "holder-mismatch"
-  | "launch-mismatch";
+  | "launch-mismatch"
+  | "hash-mismatch"
+  | "plan-binding-mismatch";
 
 export type RelayAuthVerification =
   | { ok: true; payload: RelayAuthPayload }
@@ -132,6 +140,8 @@ export function issueRelayAuthToken(
     chainId: normalizeChainId(input.chainId),
     maxTransactionCount: normalizeMaxTransactionCount(input.maxTransactionCount),
     purpose: normalizePurpose(input.purpose),
+    expectedHashes: normalizeExpectedHashes(input.expectedHashes),
+    planBinding: normalizeHash(input.planBinding, "planBinding"),
     issuedAt: now,
     expiresAt: now + ttlMs,
     nonce: randomBytes(16).toString("base64url"),
@@ -173,6 +183,12 @@ export function verifyRelayAuthToken(token: string, options: RelayAuthVerifyOpti
   if (payload.chainId !== expectedChainId) return { ok: false, reason: "chain-mismatch" };
   if (payload.purpose !== expectedPurpose) return { ok: false, reason: "purpose-mismatch" };
   if (transactionCount > payload.maxTransactionCount) return { ok: false, reason: "transaction-count-exceeded" };
+  if (options.expectedPlanBinding !== undefined && normalizeHash(options.expectedPlanBinding, "expectedPlanBinding") !== payload.planBinding) {
+    return { ok: false, reason: "plan-binding-mismatch" };
+  }
+  if (options.expectedHashes !== undefined && !sameHashSet(normalizeExpectedHashes(options.expectedHashes), payload.expectedHashes)) {
+    return { ok: false, reason: "hash-mismatch" };
+  }
   if (expectedHolderAddress && payload.holderAddress !== expectedHolderAddress) return { ok: false, reason: "holder-mismatch" };
   if (expectedLaunchId && payload.launchId !== expectedLaunchId) return { ok: false, reason: "launch-mismatch" };
 
@@ -187,6 +203,8 @@ export function parseRelayAuthRequest(value: unknown): RelayAuthRequestInput {
     chainId: normalizeChainId(value.chainId),
     maxTransactionCount: normalizeMaxTransactionCount(value.maxTransactionCount),
     purpose: normalizePurpose(value.purpose),
+    expectedHashes: normalizeExpectedHashes(value.expectedHashes),
+    planBinding: normalizeHash(value.planBinding, "planBinding"),
     ttlMs: value.ttlMs === undefined ? undefined : normalizeTtl(value.ttlMs),
   };
 }
@@ -205,6 +223,8 @@ function decodeRelayPayload(body: string): RelayAuthPayload | null {
       chainId: normalizeChainId(value.chainId),
       maxTransactionCount: normalizeMaxTransactionCount(value.maxTransactionCount),
       purpose: normalizePurpose(value.purpose),
+      expectedHashes: normalizeExpectedHashes(value.expectedHashes),
+      planBinding: normalizeHash(value.planBinding, "planBinding"),
       issuedAt: normalizeTimestamp(value.issuedAt, "issuedAt"),
       expiresAt: normalizeTimestamp(value.expiresAt, "expiresAt"),
       nonce: normalizeNonce(value.nonce),
@@ -269,6 +289,26 @@ function normalizeTransactionCount(value: unknown): number {
 function normalizePurpose(value: unknown): RelayAuthPurpose {
   if (value === "broadcast" || value === "arm") return value;
   throw new Error("Relay token purpose must be broadcast or arm.");
+}
+
+function normalizeHash(value: unknown, label: string): string {
+  if (typeof value !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(value)) throw new Error(`Relay token ${label} must be a 32-byte hex hash.`);
+  return value.toLowerCase();
+}
+
+function normalizeExpectedHashes(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > RELAY_AUTH_MAX_TRANSACTION_COUNT) {
+    throw new Error("Relay token expectedHashes must be a non-empty bounded array.");
+  }
+  const hashes = value.map((hash, index) => normalizeHash(hash, `expectedHashes[${index}]`));
+  if (new Set(hashes).size !== hashes.length) throw new Error("Relay token expectedHashes must not contain duplicates.");
+  return hashes;
+}
+
+function sameHashSet(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  const rightSet = new Set(right.map((hash) => hash.toLowerCase()));
+  return left.every((hash) => rightSet.has(hash.toLowerCase()));
 }
 
 function normalizeTtl(value: unknown): number {
