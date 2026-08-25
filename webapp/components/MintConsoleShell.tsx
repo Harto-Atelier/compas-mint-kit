@@ -279,27 +279,39 @@ function MobileBottomNav({ active, setActive }: { active: MainTab; setActive: (t
   );
 }
 
-const skinOptions: Array<{ skin: ConsoleSkin; label: string; detail: string }> = [
-  { skin: "light", label: "Light", detail: "cream gallery" },
-  { skin: "dark", label: "Dark", detail: "exquisite black" },
-  { skin: "coded", label: "Coded", detail: "terminal snipes" },
+const skinOptions: Array<{ skin: ConsoleSkin; label: string; swatch: string }> = [
+  { skin: "light", label: "Light", swatch: "#f3efe3" },
+  { skin: "dark", label: "Dark", swatch: "#ff6a1a" },
+  { skin: "coded", label: "Code", swatch: "#75ff8f" },
 ];
 
 function SkinSwitcher({ skin, setSkin }: { skin: ConsoleSkin; setSkin: (skin: ConsoleSkin) => void }) {
   return (
-    <div className="fixed inset-x-3 bottom-[4.8rem] z-40 mx-auto grid max-w-xl grid-cols-3 gap-1 border border-[color:var(--compas-line)] bg-[color:var(--compas-card)] p-1 shadow-[8px_8px_0_var(--compas-shadow)] sm:bottom-4 lg:bottom-5">
+    <div
+      className="fixed bottom-[4.65rem] left-1/2 z-40 flex -translate-x-1/2 items-center gap-0.5 border border-[color:var(--compas-line)] bg-[color:var(--compas-card)] p-1 shadow-[4px_4px_0_var(--compas-shadow)] backdrop-blur-xl sm:bottom-3 lg:bottom-4"
+      role="group"
+      aria-label="Console color mode"
+    >
       {skinOptions.map((item) => (
         <button
           key={item.skin}
           type="button"
           onClick={() => setSkin(item.skin)}
+          aria-pressed={skin === item.skin}
+          title={`${item.label} color mode`}
           className={cx(
-            "min-h-12 border px-2 py-2 text-left transition",
-            skin === item.skin ? "border-[color:var(--compas-accent)] bg-[color:var(--compas-accent)] text-[color:var(--compas-accent-ink)]" : "border-transparent text-[color:var(--compas-muted)] hover:border-[color:var(--compas-line)] hover:text-[color:var(--compas-ink)]",
+            "flex h-8 items-center gap-1.5 border px-2 text-[9px] font-black uppercase tracking-[0.14em] transition sm:h-9 sm:px-2.5 sm:text-[10px]",
+            skin === item.skin
+              ? "border-[color:var(--compas-accent)] bg-[color:var(--compas-accent)] text-[color:var(--compas-accent-ink)]"
+              : "border-transparent text-[color:var(--compas-muted)] hover:border-[color:var(--compas-line)] hover:text-[color:var(--compas-ink)]",
           )}
         >
-          <p className="text-xs font-black uppercase tracking-[0.2em]">{item.label}</p>
-          <p className="hidden text-[10px] font-bold uppercase tracking-[0.12em] opacity-70 sm:block">{item.detail}</p>
+          <span
+            className="h-2.5 w-2.5 shrink-0 border border-current"
+            style={{ backgroundColor: item.swatch }}
+            aria-hidden="true"
+          />
+          {item.label}
         </button>
       ))}
     </div>
@@ -357,7 +369,7 @@ export default function MintConsoleShell({ initialTab = "Mints" }: { initialTab?
   return (
     <CompasGate>
     <main className="compas-console overflow-x-hidden" data-skin={skin}>
-      <div className="relative min-h-dvh bg-[var(--compas-bg-art)] px-3 pb-40 pt-3 text-[color:var(--compas-ink)] transition-colors duration-300 sm:px-6 sm:py-5 lg:px-8">
+      <div className="relative min-h-dvh bg-[var(--compas-bg-art)] px-3 pb-32 pt-3 text-[color:var(--compas-ink)] transition-colors duration-300 sm:px-6 sm:pb-24 sm:pt-5 lg:px-8">
         <div className="pointer-events-none fixed inset-0 z-0 opacity-80 [background:var(--compas-grain)]" />
         <div className="relative z-10 mx-auto grid max-w-[1480px] min-w-0 gap-5 lg:grid-cols-[300px_minmax(0,1fr)]">
           <Sidebar active={activeTab} setActive={setActiveTab} stagedWallets={wallets.length} />
