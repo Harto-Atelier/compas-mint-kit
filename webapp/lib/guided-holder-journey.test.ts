@@ -201,7 +201,7 @@ test("funding capability check requires the same bound plan to provide drop, rec
 });
 
 test("guided resolver continues from simulation through mint, receipts, and finish", () => {
-  const completeBeforeSimulation = { holder: true, burners: true, drop: true, fundingReview: true, fundingComplete: true };
+  const completeBeforeSimulation = { holder: true, burners: true, setup: true, drop: true, fundingReview: true, fundingComplete: true };
   assert.equal(resolveGuidedHolderStep({ ...completeBeforeSimulation, simulationComplete: false, broadcastComplete: false, receiptsComplete: false }), "simulate");
   assert.equal(resolveGuidedHolderStep({ ...completeBeforeSimulation, simulationComplete: true, broadcastComplete: false, receiptsComplete: false }), "mint");
   assert.equal(resolveGuidedHolderStep({ ...completeBeforeSimulation, simulationComplete: true, broadcastComplete: true, receiptsComplete: false }), "receipts");

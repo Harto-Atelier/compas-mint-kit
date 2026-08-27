@@ -21,14 +21,15 @@ import {
 import type { MintDiscoveryResponse, MintStage } from "./mint-types";
 
 export const GUIDED_HOLDER_STEPS = [
-  { id: "holder", label: "Holder" },
+  { id: "holder", label: "Connect" },
   { id: "burners", label: "Burners" },
-  { id: "drop", label: "Drop" },
-  { id: "funding-review", label: "Review" },
+  { id: "setup", label: "Setup" },
+  { id: "drop", label: "Mint" },
+  { id: "funding-review", label: "Confirm" },
   { id: "funding", label: "Fund" },
-  { id: "simulate", label: "Simulate" },
-  { id: "mint", label: "Mint" },
-  { id: "receipts", label: "Receipts" },
+  { id: "simulate", label: "Check" },
+  { id: "mint", label: "Launch" },
+  { id: "receipts", label: "Receipt" },
   { id: "finish", label: "Finish" },
 ] as const;
 
@@ -37,6 +38,7 @@ export type GuidedHolderStepId = (typeof GUIDED_HOLDER_STEPS)[number]["id"];
 export type GuidedHolderReadiness = {
   holder: boolean;
   burners: boolean;
+  setup: boolean;
   drop: boolean;
   fundingReview: boolean;
   fundingComplete: boolean;
@@ -58,6 +60,7 @@ export type GuidedMintSimulationPlan = {
 export function resolveGuidedHolderStep(readiness: GuidedHolderReadiness): GuidedHolderStepId {
   if (!readiness.holder) return "holder";
   if (!readiness.burners) return "burners";
+  if (!readiness.setup) return "setup";
   if (!readiness.drop) return "drop";
   if (!readiness.fundingReview) return "funding-review";
   if (!readiness.fundingComplete) return "funding";

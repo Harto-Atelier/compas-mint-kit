@@ -76,6 +76,7 @@ test("guided holder flow keeps the required web-first order and advances one gat
   assert.deepEqual(GUIDED_HOLDER_STEPS.map((step) => step.id), [
     "holder",
     "burners",
+    "setup",
     "drop",
     "funding-review",
     "funding",
@@ -84,9 +85,10 @@ test("guided holder flow keeps the required web-first order and advances one gat
     "receipts",
     "finish",
   ]);
-  assert.equal(resolveGuidedHolderStep({ holder: false, burners: false, drop: false, fundingReview: false, fundingComplete: false }), "holder");
-  assert.equal(resolveGuidedHolderStep({ holder: true, burners: true, drop: true, fundingReview: true, fundingComplete: false }), "funding");
-  assert.equal(resolveGuidedHolderStep({ holder: true, burners: true, drop: true, fundingReview: true, fundingComplete: true, simulationComplete: false, broadcastComplete: false, receiptsComplete: false }), "simulate");
+  assert.equal(resolveGuidedHolderStep({ holder: false, burners: false, setup: false, drop: false, fundingReview: false, fundingComplete: false }), "holder");
+  assert.equal(resolveGuidedHolderStep({ holder: true, burners: true, setup: false, drop: false, fundingReview: false, fundingComplete: false }), "setup");
+  assert.equal(resolveGuidedHolderStep({ holder: true, burners: true, setup: true, drop: true, fundingReview: true, fundingComplete: false }), "funding");
+  assert.equal(resolveGuidedHolderStep({ holder: true, burners: true, setup: true, drop: true, fundingReview: true, fundingComplete: true, simulationComplete: false, broadcastComplete: false, receiptsComplete: false }), "simulate");
 });
 
 test("projectGuidedBurners uses the canonical Vault public projection and filters to the drop chain", () => {

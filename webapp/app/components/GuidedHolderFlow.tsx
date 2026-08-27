@@ -102,6 +102,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
   const [bufferPercent, setBufferPercent] = useState("0");
   const [mintValueMaxEth, setMintValueMaxEth] = useState("0.25");
   const [holderFundingCapEth, setHolderFundingCapEth] = useState("0.30");
+  const [setupComplete, setSetupComplete] = useState(false);
   const [reviewedQuantity, setReviewedQuantity] = useState<number | null>(null);
   const [fundingPlan, setFundingPlan] = useState<BurnerFundingPlan | null>(null);
   const [executionPlan, setExecutionPlan] = useState<BrowserMintPlan | null>(null);
@@ -167,6 +168,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
       return null;
     });
     setReviewedQuantity(null);
+    setSetupComplete(false);
     setFundingPlan(null);
     setExecutionCapabilities(null);
     setPreflight(null);
@@ -214,6 +216,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
   const readiness = {
     holder: Boolean(holder),
     burners: selectedBurners.length > 0,
+    setup: setupComplete,
     drop: Boolean(discovery),
     fundingReview: Boolean(fundingPlan && executionCapabilities?.ready),
     fundingComplete,
@@ -285,6 +288,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
     revokePreparedBrowserMintSigners(transactions);
     if (executionPlan) revokePreparedBrowserMintSigners(executionPlan.transactions);
     setReviewedQuantity(null);
+    setSetupComplete(false);
     setExpectedTransactionCount(null);
     setFundingPlan(null);
     setExecutionPlan(null);
@@ -326,7 +330,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
       setSelectedBurnerAddresses(selected.map((wallet) => wallet.address));
       setVaultPassphrase("");
       setNotice(`${projected.length} burner address${projected.length === 1 ? "" : "es"} loaded. Signers stay only in memory for this exact guided run and are never displayed.`);
-      setStep("drop");
+      setStep("setup");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not read the encrypted launch Vault.");
     } finally {
@@ -857,9 +861,29 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
           </div>
         ) : null}
 
+        {step === "setup" ? (
+          <div className={CARD}>
+            <StepHeading number="03" title="Setup" body="Choose quantity, spend, and distribution." />
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <NumberInput label="Quantity / wallet" value={quantityPerBurner} onChange={(value) => { clearBoundRun(); setQuantityPerBurner(value); }} min={1} />
+              <TextInput label="Maximum spend" value={mintValueMaxEth} onChange={(value) => { clearBoundRun(); setMintValueMaxEth(value); }} />
+            </div>
+            <details className="mt-4 rounded-2xl border border-dashed border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-3">
+              <summary className="cursor-pointer text-xs font-black text-[color:var(--compas-muted)]">More options</summary>
+              <div className="mt-3 grid gap-3 sm:grid-cols-4">
+                <NumberInput label="Mint gas limit" value={mintGasLimit} onChange={(value) => { clearBoundRun(); setMintGasLimit(value); }} min={21_000} />
+                <TextInput label="Max fee gwei" value={maxFeeGwei} onChange={(value) => { clearBoundRun(); setMaxFeeGwei(value); }} />
+                <TextInput label="Buffer %" value={bufferPercent} onChange={(value) => { clearBoundRun(); setBufferPercent(value); }} />
+                <TextInput label="Funding cap ETH" value={holderFundingCapEth} onChange={(value) => { clearBoundRun(); setHolderFundingCapEth(value); }} />
+              </div>
+            </details>
+            <button type="button" onClick={() => { setSetupComplete(true); setStep("drop"); }} className="mt-4 w-full rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)]">Continue</button>
+          </div>
+        ) : null}
+
         {step === "drop" ? (
           <div className={CARD}>
-            <StepHeading number="03" title="Choose mint" body="Paste the mint link or contract. We’ll check if it’s live before you continue." />
+            <StepHeading number="04" title="Select mint" body="Pick the live OpenSea mint." />
             <form onSubmit={scanDrop} className="mt-4 grid gap-2 sm:grid-cols-[1fr_150px_auto]">
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Mint link or contract" className={FIELD} />
               <select value={chainKey} onChange={(event) => setChainKey(event.target.value)} className={FIELD}><option value="base">Base</option><option value="ethereum">Ethereum</option></select>
@@ -870,28 +894,18 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
 
         {step === "funding-review" && discovery ? (
           <div className={CARD}>
-            <StepHeading number="04" title="Review" body={`${discovery.collection.name} · ${requireExecutablePublicStage(discovery).priceEth} ETH each.`} />
+            <StepHeading number="05" title="Confirm" body={`${discovery.collection.name} · ${requireExecutablePublicStage(discovery).priceEth} ETH each.`} />
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <div className="rounded-2xl border-2 border-[color:var(--compas-accent)] bg-[color:var(--compas-soft)] p-4 lg:col-span-2">
-                <TextInput label="Maximum spend" value={mintValueMaxEth} onChange={(value) => { clearBoundRun(); setMintValueMaxEth(value); }} />
-                <p className="mt-2 text-xs font-bold text-[color:var(--compas-muted)]">Your hard cap before gas.</p>
+                <p className="text-xs font-black uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">Your setup</p>
+                <p className="mt-2 text-lg font-black">{quantityPerBurner} per wallet · max {mintValueMaxEth} ETH</p>
+                <p className="mt-2 text-xs font-bold text-[color:var(--compas-muted)]">NFT recipient: your verified Compas wallet.</p>
               </div>
               <div className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-4">
-                <p className="text-xs font-black uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">Network gas estimate / max</p>
-                <p className="mt-2 text-lg font-black">Calculated after review</p>
-                <p className="mt-1 text-xs font-bold text-[color:var(--compas-muted)]">Uses gas limits × maximum fee. Shown separately from mint value.</p>
+                <p className="text-xs font-black uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">Disclaimer</p>
+                <p className="mt-2 text-sm font-bold text-[color:var(--compas-muted)]">Real mint can spend funds. You sign before anything is sent.</p>
               </div>
             </div>
-            <details className="mt-4 rounded-2xl border border-dashed border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-3">
-              <summary className="cursor-pointer text-xs font-black text-[color:var(--compas-muted)]">More settings</summary>
-              <div className="mt-3 grid gap-3 sm:grid-cols-5">
-              <NumberInput label="Quantity / burner" value={quantityPerBurner} onChange={(value) => { clearBoundRun(); setQuantityPerBurner(value); }} min={1} />
-              <NumberInput label="Mint gas limit" value={mintGasLimit} onChange={(value) => { clearBoundRun(); setMintGasLimit(value); }} min={21_000} />
-              <TextInput label="Max fee gwei" value={maxFeeGwei} onChange={(value) => { clearBoundRun(); setMaxFeeGwei(value); }} />
-              <TextInput label="Buffer %" value={bufferPercent} onChange={(value) => { clearBoundRun(); setBufferPercent(value); }} />
-              <TextInput label="Holder funding authorization ceiling ETH" value={holderFundingCapEth} onChange={(value) => { clearBoundRun(); setHolderFundingCapEth(value); }} />
-              </div>
-            </details>
             <button type="button" onClick={() => void reviewFunding()} disabled={Boolean(busy)} className="mt-4 w-full rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:opacity-50">Continue</button>
           </div>
         ) : null}
