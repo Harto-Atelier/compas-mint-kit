@@ -52,29 +52,35 @@ test("guided holder UI separates mint value from network gas and blocks unsafe f
   assert.doesNotMatch(source, /auto-send|auto-retry|auto-sweep/i);
 });
 
-test("guided holder UI keeps imports, bulk tools, and CLI behind Advanced navigation", () => {
+test("guided holder UI keeps imports, bulk tools, and CLI behind optional Advanced navigation", () => {
   assert.match(source, /<details/);
-  assert.match(source, />Advanced</);
+  assert.match(source, /Optional advanced tools/);
+  assert.match(source, /Optional only/);
   assert.match(source, /Open Vault tools/);
   assert.match(source, /Open CLI planner/);
 });
 
-test("console opens on the minimal Guide and delegates dense operator tools to Advanced tabs", () => {
+test("console opens on the minimal Guide and delegates dense operator tools to collapsed optional tabs", () => {
   assert.match(shellSource, /import GuidedHolderFlow/);
   assert.match(shellSource, /type MainTab = "Guide"/);
   assert.match(shellSource, /initialTab = "Guide"/);
   assert.match(shellSource, /<GuidedHolderFlow embedded onOpenAdvanced=/);
+  assert.match(shellSource, /Mint console optional sections/);
+  assert.match(shellSource, /Optional sections/);
   assert.match(shellSource, /Advanced tools/);
+  assert.doesNotMatch(shellSource, /open=\{active !== "Guide"\}/);
   assert.doesNotMatch(appRouteSource, /initialTab="Mints"/);
   assert.doesNotMatch(shellSource, /Import wallets to start/);
   assert.doesNotMatch(shellSource, /Harto operator shell/);
 });
 
-test("mobile guide makes the current step prominent while Advanced remains secondary", () => {
+test("mobile guide makes the current step prominent while optional details stay secondary", () => {
   assert.match(source, /Current step/);
   assert.match(source, /overflow-x-auto/);
   assert.match(source, /<details/);
-  assert.match(source, />Advanced</);
+  assert.match(source, /Holder guide/);
+  assert.match(source, /Optional guardrails/);
+  assert.match(source, /Optional advanced tools/);
 });
 
 test("phone Guide removes shell chrome and hero so the active step stays above the fold", () => {

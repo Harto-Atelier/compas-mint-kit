@@ -760,14 +760,18 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
     <section className={`${embedded ? "" : "min-h-screen bg-[var(--compas-bg-art)] p-4 sm:p-6"} text-[color:var(--compas-ink)]`}>
       <div className="mx-auto grid max-w-5xl gap-4">
         <header className="rounded-[2rem] border border-[color:var(--compas-line)] bg-[color:var(--compas-hero)] p-5 text-[color:var(--compas-hero-ink)] sm:p-7">
-          <p className="text-xs font-black uppercase tracking-[0.24em] text-[color:var(--compas-hero-muted)]">Compas holder mint guide</p>
-          <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">Fund, mint, verify, finish.</h1>
-          <p className="mt-2 max-w-2xl text-sm font-semibold text-[color:var(--compas-hero-muted)]">One bound holder journey: exact funding, simulation, explicit live consent, real receipts, and a balance-safe finish.</p>
-          <div className="mt-4 flex flex-wrap gap-2 text-[11px] font-black uppercase tracking-[0.14em]">
-            <span className="rounded-full border border-[color:var(--compas-hero-line)] px-3 py-1.5">No automatic funding</span>
-            <span className="rounded-full border border-[color:var(--compas-hero-line)] px-3 py-1.5">Recipient · verified holder</span>
-            <span className="rounded-full border border-[color:var(--compas-hero-line)] px-3 py-1.5">Explicit live consent</span>
-          </div>
+          <p className="text-xs font-black uppercase tracking-[0.24em] text-[color:var(--compas-hero-muted)]">Compas mint kit</p>
+          <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">Mint one step at a time.</h1>
+          <p className="mt-2 max-w-2xl text-sm font-semibold text-[color:var(--compas-hero-muted)]">Make one decision, continue, and keep the verified Compas wallet as the NFT recipient.</p>
+          <details className="mt-4 rounded-2xl border border-dashed border-[color:var(--compas-hero-line)] bg-[color:var(--compas-hero-card)] p-3">
+            <summary className="cursor-pointer text-xs font-black uppercase tracking-[0.16em] text-[color:var(--compas-hero-muted)]">Holder guide</summary>
+            <p className="mt-2 text-xs font-semibold text-[color:var(--compas-hero-muted)]">Optional guardrails for the guided path. They stay collapsed so the next mint action remains primary.</p>
+            <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-black uppercase tracking-[0.14em]">
+              <span className="rounded-full border border-[color:var(--compas-hero-line)] px-3 py-1.5">No automatic funding</span>
+              <span className="rounded-full border border-[color:var(--compas-hero-line)] px-3 py-1.5">Recipient · verified holder</span>
+              <span className="rounded-full border border-[color:var(--compas-hero-line)] px-3 py-1.5">Explicit live consent</span>
+            </div>
+          </details>
         </header>
 
         <div className="rounded-2xl border-2 border-[color:var(--compas-accent)] bg-[color:var(--compas-card)] p-4 sm:hidden" aria-live="polite">
@@ -964,10 +968,10 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
           </div>
         ) : null}
 
-        <details className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-card)] p-4">
-          <summary className="cursor-pointer text-sm font-black">Advanced</summary>
-          <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => openAdvanced("Vault")} className="rounded-xl border border-[color:var(--compas-line)] px-4 py-2 text-xs font-black">Open Vault tools</button><button type="button" onClick={() => openAdvanced("Mints")} className="rounded-xl border border-[color:var(--compas-line)] px-4 py-2 text-xs font-black">Open CLI planner</button><button type="button" onClick={() => openAdvanced("Disperse")} className="rounded-xl border border-[color:var(--compas-line)] px-4 py-2 text-xs font-black">Open Disperse draft</button></div>
-          <p className="mt-2 text-xs font-semibold text-[color:var(--compas-muted)]">Bulk and generic planning tools stay secondary. They do not replace the bound holder journey above.</p>
+        <details className="rounded-2xl border border-dashed border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-3 text-xs">
+          <summary className="cursor-pointer font-black uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">Optional advanced tools</summary>
+          <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => openAdvanced("Vault")} className="rounded-xl border border-[color:var(--compas-line)] px-3 py-2 text-xs font-black text-[color:var(--compas-muted)]">Open Vault tools</button><button type="button" onClick={() => openAdvanced("Mints")} className="rounded-xl border border-[color:var(--compas-line)] px-3 py-2 text-xs font-black text-[color:var(--compas-muted)]">Open CLI planner</button><button type="button" onClick={() => openAdvanced("Disperse")} className="rounded-xl border border-[color:var(--compas-line)] px-3 py-2 text-xs font-black text-[color:var(--compas-muted)]">Open Disperse draft</button></div>
+          <p className="mt-2 text-xs font-semibold text-[color:var(--compas-muted)]">Optional only. Bulk and generic planning tools stay secondary and never replace the guided mint step above.</p>
         </details>
       </div>
     </section>

@@ -103,40 +103,43 @@ function Sidebar({
           </div>
         </div>
 
-        <nav className="mt-3 grid min-w-0 gap-2 sm:mt-5" aria-label="Mint console sections">
-          <button
-            type="button"
-            onClick={() => setActive("Guide")}
-            className={cx(
-              "group flex min-h-11 min-w-0 items-center justify-between rounded-2xl px-4 py-3 text-left text-sm font-extrabold transition",
-              active === "Guide"
-                ? "bg-[color:var(--compas-accent)] text-[color:var(--compas-accent-ink)] shadow-[8px_8px_0_var(--compas-shadow)]"
-                : "text-[color:var(--compas-muted)] hover:bg-[color:var(--compas-soft)] hover:text-[color:var(--compas-ink)]",
-            )}
-          >
-            <span>Holder guide</span>
-            <span className="text-xs font-black">→</span>
-          </button>
-          <details className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-2" open={active !== "Guide"}>
-            <summary className="cursor-pointer px-2 py-1 text-xs font-black uppercase tracking-[0.16em] text-[color:var(--compas-muted)]">Advanced tools</summary>
-            <div className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-1">
-              {mainTabs.filter((tab) => tab !== "Guide").map((tab) => (
-                <button
-                  key={tab}
-                  type="button"
-                  onClick={() => setActive(tab)}
-                  className={cx(
-                    "group flex min-h-10 min-w-0 items-center justify-between rounded-xl px-3 py-2 text-left text-xs font-extrabold transition sm:text-sm",
-                    active === tab
-                      ? "bg-[color:var(--compas-accent)] text-[color:var(--compas-accent-ink)]"
-                      : "text-[color:var(--compas-muted)] hover:bg-[color:var(--compas-card)] hover:text-[color:var(--compas-ink)]",
-                  )}
-                >
-                  <span className="truncate">{tab}</span>
-                  <span className="text-xs font-black">→</span>
-                </button>
-              ))}
-            </div>
+        <nav className="mt-3 grid min-w-0 gap-2 sm:mt-5" aria-label="Mint console optional sections">
+          <details className="rounded-2xl border border-dashed border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-2 text-xs">
+            <summary className="cursor-pointer px-2 py-1 font-black uppercase tracking-[0.16em] text-[color:var(--compas-muted)]">Optional sections</summary>
+            <button
+              type="button"
+              onClick={() => setActive("Guide")}
+              className={cx(
+                "mt-2 flex min-h-10 w-full min-w-0 items-center justify-between rounded-xl border px-3 py-2 text-left font-extrabold transition",
+                active === "Guide"
+                  ? "border-[color:var(--compas-accent)] bg-[color:var(--compas-card)] text-[color:var(--compas-ink)]"
+                  : "border-transparent text-[color:var(--compas-muted)] hover:border-[color:var(--compas-line)] hover:bg-[color:var(--compas-card)] hover:text-[color:var(--compas-ink)]",
+              )}
+            >
+              <span>Holder guide</span>
+              <span className="text-[10px] font-black uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">Help</span>
+            </button>
+            <details className="mt-2 rounded-xl border border-[color:var(--compas-line)] bg-[color:var(--compas-card)] p-2">
+              <summary className="cursor-pointer px-1 py-1 font-black uppercase tracking-[0.16em] text-[color:var(--compas-muted)]">Advanced tools</summary>
+              <div className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-1">
+                {mainTabs.filter((tab) => tab !== "Guide").map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => setActive(tab)}
+                    className={cx(
+                      "group flex min-h-9 min-w-0 items-center justify-between rounded-xl px-3 py-2 text-left text-xs font-extrabold transition",
+                      active === tab
+                        ? "bg-[color:var(--compas-accent)] text-[color:var(--compas-accent-ink)]"
+                        : "text-[color:var(--compas-muted)] hover:bg-[color:var(--compas-soft)] hover:text-[color:var(--compas-ink)]",
+                    )}
+                  >
+                    <span className="truncate">{tab}</span>
+                    <span className="text-xs font-black">→</span>
+                  </button>
+                ))}
+              </div>
+            </details>
           </details>
         </nav>
 
