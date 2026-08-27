@@ -421,8 +421,11 @@ export default function MintConsoleShell({ initialTab = "Guide" }: { initialTab?
         activeTab === "Guide" ? "pb-6" : "pb-32",
       )}>
         <div className="pointer-events-none fixed inset-0 z-0 opacity-80 [background:var(--compas-grain)]" />
-        <div className="relative z-10 mx-auto grid max-w-[1480px] min-w-0 gap-5 lg:grid-cols-[300px_minmax(0,1fr)]">
-          <Sidebar active={activeTab} setActive={setActiveTab} stagedWallets={wallets.length} />
+        <div className={cx(
+          "relative z-10 mx-auto grid min-w-0 gap-5",
+          activeTab === "Guide" ? "max-w-3xl" : "max-w-[1480px] lg:grid-cols-[300px_minmax(0,1fr)]",
+        )}>
+          {activeTab === "Guide" ? null : <Sidebar active={activeTab} setActive={setActiveTab} stagedWallets={wallets.length} />}
           <div className="grid min-w-0 gap-5">
             {activeTab === "Guide" ? (
               <MainPanel active={activeTab} setActive={setActiveTab} />

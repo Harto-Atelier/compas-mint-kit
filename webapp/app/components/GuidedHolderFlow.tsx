@@ -761,8 +761,8 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
       <div className="mx-auto grid max-w-5xl gap-4">
         <header className="rounded-[2rem] border border-[color:var(--compas-line)] bg-[color:var(--compas-hero)] p-5 text-[color:var(--compas-hero-ink)] sm:p-7">
           <p className="text-xs font-black uppercase tracking-[0.24em] text-[color:var(--compas-hero-muted)]">Compas mint kit</p>
-          <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">Mint one step at a time.</h1>
-          <p className="mt-2 max-w-2xl text-sm font-semibold text-[color:var(--compas-hero-muted)]">Make one decision, continue, and keep the verified Compas wallet as the NFT recipient.</p>
+          <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">Mint, calmly.</h1>
+          <p className="mt-2 max-w-xl text-sm font-semibold text-[color:var(--compas-hero-muted)]">One step. One decision. Your Compas wallet receives the NFT.</p>
           <details className="mt-4 rounded-2xl border border-dashed border-[color:var(--compas-hero-line)] bg-[color:var(--compas-hero-card)] p-3">
             <summary className="cursor-pointer text-xs font-black uppercase tracking-[0.16em] text-[color:var(--compas-hero-muted)]">Holder guide</summary>
             <p className="mt-2 text-xs font-semibold text-[color:var(--compas-hero-muted)]">Optional guardrails for the guided path. They stay collapsed so the next mint action remains primary.</p>
@@ -779,24 +779,27 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
           <p className="mt-1 text-xl font-black">{currentStep.label}</p>
         </div>
 
-        <nav className="flex gap-2 overflow-x-auto pb-2 sm:grid sm:grid-cols-3 lg:grid-cols-9" aria-label="Guided holder flow">
-          {GUIDED_HOLDER_STEPS.map((item, index) => {
-            const available = index <= maxReachableIndex || (item.id === "finish" && broadcastComplete);
-            const active = step === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                disabled={!available}
-                onClick={() => setStep(item.id)}
-                className={`min-w-28 shrink-0 rounded-2xl border px-3 py-3 text-left transition sm:min-w-0 ${active ? "border-[color:var(--compas-accent)] bg-[color:var(--compas-accent)] text-[color:var(--compas-accent-ink)]" : "border-[color:var(--compas-line)] bg-[color:var(--compas-card)] text-[color:var(--compas-muted)]"} disabled:cursor-not-allowed disabled:opacity-40`}
-              >
-                <span className="text-[10px] font-black uppercase tracking-[0.18em]">{String(index + 1).padStart(2, "0")}</span>
-                <span className="mt-1 block text-sm font-black">{item.label}</span>
-              </button>
-            );
-          })}
-        </nav>
+        <details className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-3 text-xs">
+          <summary className="cursor-pointer font-black text-[color:var(--compas-muted)]">All steps</summary>
+          <nav className="mt-3 flex gap-2 overflow-x-auto pb-1 sm:grid sm:grid-cols-3 lg:grid-cols-9" aria-label="Guided holder flow">
+            {GUIDED_HOLDER_STEPS.map((item, index) => {
+              const available = index <= maxReachableIndex || (item.id === "finish" && broadcastComplete);
+              const active = step === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  disabled={!available}
+                  onClick={() => setStep(item.id)}
+                  className={`min-w-24 shrink-0 rounded-xl border px-3 py-2 text-left transition sm:min-w-0 ${active ? "border-[color:var(--compas-accent)] bg-[color:var(--compas-accent)] text-[color:var(--compas-accent-ink)]" : "border-[color:var(--compas-line)] bg-[color:var(--compas-card)] text-[color:var(--compas-muted)]"} disabled:cursor-not-allowed disabled:opacity-40`}
+                >
+                  <span className="text-[10px] font-black uppercase tracking-[0.18em]">{String(index + 1).padStart(2, "0")}</span>
+                  <span className="mt-1 block text-xs font-black">{item.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        </details>
 
         {notice ? <p className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-800">{notice}</p> : null}
         {error ? <p className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">{error}</p> : null}
@@ -830,10 +833,10 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
 
         {step === "holder" ? (
           <div className={CARD}>
-            <StepHeading number="01" title="Connect verified Compas" body="The signed holder session is the funding source and final NFT recipient." />
+            <StepHeading number="01" title="Connect" body="Verify your Compas wallet." />
             {holder ? (
               <div className="mt-4 flex flex-col gap-3 rounded-2xl bg-[color:var(--compas-soft)] p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div><p className="font-mono text-sm font-black">{maskVaultAddress(holder.address)}</p><p className="mt-1 text-xs font-bold text-[color:var(--compas-muted)]">{holder.compasCount} Compas · server verified</p></div>
+                <div><p className="font-mono text-sm font-black">{maskVaultAddress(holder.address)}</p><p className="mt-1 text-xs font-bold text-[color:var(--compas-muted)]">Verified</p></div>
                 <button type="button" onClick={() => setStep("burners")} className="rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)]">Continue</button>
               </div>
             ) : <p className="mt-4 text-sm font-bold text-[color:var(--compas-muted)]">Waiting for the holder gate. Return to login if this does not resolve.</p>}
@@ -842,7 +845,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
 
         {step === "burners" ? (
           <div className={CARD}>
-            <StepHeading number="02" title="Create or load temporary mint wallets" body="NFTs go to your verified Compas wallet. These burner wallets only pay for this mint; their keys stay encrypted in this browser and are never shown." />
+            <StepHeading number="02" title="Prepare wallets" body="Use temporary wallets for payment. NFT goes to you." />
             <div className="mt-4 grid gap-3 sm:grid-cols-[auto_1fr]">
               <button type="button" onClick={() => openAdvanced("Vault")} className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] px-5 py-3 text-sm font-black">Create temporary mint wallets</button>
               <form onSubmit={loadCanonicalBurners} className="grid gap-2 sm:grid-cols-[1fr_auto]">
@@ -867,11 +870,11 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
 
         {step === "funding-review" && discovery ? (
           <div className={CARD}>
-            <StepHeading number="04" title="Review exact funding and complete path" body={`${discovery.collection.name} · ${requireExecutablePublicStage(discovery).priceEth} ETH per NFT. Network gas and funding buffer are separate.`} />
+            <StepHeading number="04" title="Review" body={`${discovery.collection.name} · ${requireExecutablePublicStage(discovery).priceEth} ETH each.`} />
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <div className="rounded-2xl border-2 border-[color:var(--compas-accent)] bg-[color:var(--compas-soft)] p-4 lg:col-span-2">
-                <TextInput label="Maximum mint value ETH" value={mintValueMaxEth} onChange={(value) => { clearBoundRun(); setMintValueMaxEth(value); }} />
-                <p className="mt-2 text-xs font-bold text-[color:var(--compas-muted)]">Hard maximum for NFT mint value only across every burner. It excludes network gas.</p>
+                <TextInput label="Maximum spend" value={mintValueMaxEth} onChange={(value) => { clearBoundRun(); setMintValueMaxEth(value); }} />
+                <p className="mt-2 text-xs font-bold text-[color:var(--compas-muted)]">Your hard cap before gas.</p>
               </div>
               <div className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-4">
                 <p className="text-xs font-black uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">Network gas estimate / max</p>
@@ -879,27 +882,29 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
                 <p className="mt-1 text-xs font-bold text-[color:var(--compas-muted)]">Uses gas limits × maximum fee. Shown separately from mint value.</p>
               </div>
             </div>
-            <div className="mt-4 grid gap-3 sm:grid-cols-5">
+            <details className="mt-4 rounded-2xl border border-dashed border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-3">
+              <summary className="cursor-pointer text-xs font-black text-[color:var(--compas-muted)]">More settings</summary>
+              <div className="mt-3 grid gap-3 sm:grid-cols-5">
               <NumberInput label="Quantity / burner" value={quantityPerBurner} onChange={(value) => { clearBoundRun(); setQuantityPerBurner(value); }} min={1} />
               <NumberInput label="Mint gas limit" value={mintGasLimit} onChange={(value) => { clearBoundRun(); setMintGasLimit(value); }} min={21_000} />
               <TextInput label="Max fee gwei" value={maxFeeGwei} onChange={(value) => { clearBoundRun(); setMaxFeeGwei(value); }} />
               <TextInput label="Buffer %" value={bufferPercent} onChange={(value) => { clearBoundRun(); setBufferPercent(value); }} />
               <TextInput label="Holder funding authorization ceiling ETH" value={holderFundingCapEth} onChange={(value) => { clearBoundRun(); setHolderFundingCapEth(value); }} />
-            </div>
-            <button type="button" onClick={() => void reviewFunding()} disabled={Boolean(busy)} className="mt-4 w-full rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:opacity-50">Review and verify complete path</button>
+              </div>
+            </details>
+            <button type="button" onClick={() => void reviewFunding()} disabled={Boolean(busy)} className="mt-4 w-full rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:opacity-50">Continue</button>
           </div>
         ) : null}
 
         {step === "funding" && fundingPlan ? (
           <div className={CARD}>
-            <StepHeading number="05" title="Fund one burner at a time" body="Funding is enabled because this same run has the exact drop, holder recipient, mint-value maximum, in-memory signers, and receipt/balance reads." />
+            <StepHeading number="05" title="Fund" body="Send only what this mint needs." />
             <div className="mt-4 grid gap-3 sm:grid-cols-3">
               <Metric label="Maximum mint value" value={`${formatEther(executionPlan?.maxTotalWei ?? BigInt(0))} ETH`} prominent />
               <Metric label="Network gas estimate / max" value={`${formatEther(networkGasMaxWei)} ETH`} />
               <Metric label="Funding buffer" value={`${formatEther(fundingPlan.totals.bufferWei)} ETH`} />
             </div>
-            <p className="mt-3 text-xs font-bold text-[color:var(--compas-muted)]">Holder funding authorization ceiling: {formatEther(fundingPlan.totals.sourceTotalWei)} ETH, including burner amounts and source-transfer gas maximum. Each component remains visible above.</p>
-            {executionCapabilities ? <div className="mt-3 grid gap-2 sm:grid-cols-2">{executionCapabilities.checks.map((check) => <p key={check.id} className={`rounded-2xl border p-3 text-xs font-bold ${check.ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-700"}`}>{check.ok ? "✓" : "✕"} {check.label}<span className="mt-1 block font-mono font-semibold">{check.detail}</span></p>)}</div> : null}
+            <details className="mt-3 rounded-2xl border border-dashed border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-3"><summary className="cursor-pointer text-xs font-black text-[color:var(--compas-muted)]">Funding details</summary><p className="mt-2 text-xs font-bold text-[color:var(--compas-muted)]">Holder funding cap: {formatEther(fundingPlan.totals.sourceTotalWei)} ETH.</p>{executionCapabilities ? <div className="mt-3 grid gap-2 sm:grid-cols-2">{executionCapabilities.checks.map((check) => <p key={check.id} className={`rounded-2xl border p-3 text-xs font-bold ${check.ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-700"}`}>{check.ok ? "✓" : "✕"} {check.label}<span className="mt-1 block font-mono font-semibold">{check.detail}</span></p>)}</div> : null}</details>
             <button type="button" onClick={() => void checkHolderFunding()} disabled={!executionCapabilities?.ready || Boolean(busy)} className="mt-4 rounded-2xl border border-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent)] disabled:opacity-50">Check connected holder</button>
             {preflight ? <div className="mt-3 grid gap-2 sm:grid-cols-2">{preflight.checks.map((check) => <p key={check.id} className={`rounded-2xl border p-3 text-xs font-bold ${check.ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-700"}`}>{check.ok ? "✓" : "✕"} {check.label}<span className="mt-1 block font-mono font-semibold">{check.detail}</span></p>)}</div> : null}
             <div className="mt-4 grid gap-3">{fundingPlan.transactions.map((row) => {
@@ -914,28 +919,27 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
 
         {step === "simulate" ? (
           <div className={CARD}>
-            <StepHeading number="06" title="Simulate the exact bound mints" body="The run reuses the signers and calldata bound before funding. There is no passphrase re-entry or independent plan." />
-            <button type="button" onClick={() => void simulateMint()} disabled={!fundingComplete || !executionPlan || Boolean(busy)} className="mt-4 w-full rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:cursor-not-allowed disabled:opacity-40">Simulate exact mint rows</button>
+            <StepHeading number="06" title="Check" body="Make sure the mint is ready before signing." />
+            <button type="button" onClick={() => void simulateMint()} disabled={!fundingComplete || !executionPlan || Boolean(busy)} className="mt-4 w-full rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:cursor-not-allowed disabled:opacity-40">Check mint</button>
             {transactions.length > 0 ? <TransactionRows transactions={transactions} receipts={receipts} /> : null}
           </div>
         ) : null}
 
         {step === "mint" ? (
           <div className={CARD}>
-            <StepHeading number="07" title="Explicit final live mint consent" body="This is the only live mint gate. It signs each exact simulated burner row once and never sends a row again automatically." />
-            <div className="mt-4 grid gap-3 sm:grid-cols-3"><Metric label="Exact rows" value={transactions.length} /><Metric label="Maximum mint value" value={`${formatEther(executionPlan?.maxTotalWei ?? BigInt(0))} ETH`} prominent /><Metric label="Verified recipient" value={holder ? maskVaultAddress(holder.address) : "missing"} /></div>
+            <StepHeading number="07" title="Sign" body="Final review. Nothing moves until you approve." />
+            <div className="mt-4 grid gap-3 sm:grid-cols-2"><Metric label="Maximum spend" value={`${formatEther(executionPlan?.maxTotalWei ?? BigInt(0))} ETH`} prominent /><Metric label="Recipient" value={holder ? maskVaultAddress(holder.address) : "missing"} /></div>
             <ExecutionModeSurface simulationComplete={simulationComplete} humanFlow={humanFlow} />
             <TransactionRows transactions={transactions} receipts={receipts} />
-            <button type="button" onClick={openLiveConsent} disabled={!simulationComplete || Boolean(busy)} className="mt-4 w-full rounded-2xl bg-red-600 px-5 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40">Review final live mint consent</button>
+            <button type="button" onClick={openLiveConsent} disabled={!simulationComplete || Boolean(busy)} className="mt-4 w-full rounded-2xl bg-red-600 px-5 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40">Review and sign</button>
           </div>
         ) : null}
 
         {step === "receipts" ? (
           <div className={CARD}>
-            <StepHeading number="08" title="Verify real mint receipts" body="Enviado → Confirmado, or No completado if the chain reports a failure." />
-            <div className="mt-4 flex flex-wrap gap-2 text-xs font-black"><StatusLegend status="Preparado" /><StatusLegend status="Firmado" /><StatusLegend status="Enviado" /><StatusLegend status="Confirmado" /><StatusLegend status="No completado" /></div>
+            <StepHeading number="08" title="Receipt" body="See what completed." />
             <TransactionRows transactions={transactions} receipts={receipts} />
-            <button type="button" onClick={() => void pollMintReceipts()} disabled={receiptPolling || !receipts.some((receipt) => receipt.status === "Submitted" || receipt.status === "Confirming" || receipt.status === "Unknown")} className="mt-4 w-full rounded-2xl border border-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent)] disabled:opacity-40">{receiptPolling ? "Polling receipts…" : "Poll receipts now"}</button>
+            <button type="button" onClick={() => void pollMintReceipts()} disabled={receiptPolling || !receipts.some((receipt) => receipt.status === "Submitted" || receipt.status === "Confirming" || receipt.status === "Unknown")} className="mt-4 w-full rounded-2xl border border-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent)] disabled:opacity-40">{receiptPolling ? "Checking…" : "Check receipt"}</button>
             {confirmedReceipts.map((receipt) => <div key={receipt.transactionId} className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800"><p>Verified NFT recipient · {receipt.verifiedRecipient}</p><p className="mt-1 font-mono text-xs">Token {receipt.tokenIds?.join(", ")} · {receipt.confirmations} confirmation(s)</p></div>)}
             <button type="button" onClick={() => setStep("finish")} disabled={!broadcastComplete} className="mt-4 w-full rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:opacity-40">Review safe finish</button>
           </div>
@@ -943,7 +947,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
 
         {step === "finish" ? (
           <div className={CARD}>
-            <StepHeading number="09" title="Finish without abandoning funds" body="Finish cannot drop this run while a receipt is pending, failed, or unknown, or while any burner balance is nonzero or unknown." />
+            <StepHeading number="09" title="Finish" body="Confirm nothing is left behind." />
             {finished ? <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-emerald-800"><p className="text-xl font-black">Safe finish complete</p><p className="mt-2 text-sm font-bold">In-memory signers are gone. Verified receipt evidence remains visible in this session and the encrypted Vault was not wiped.</p></div> : (
               <>
                 <button type="button" onClick={() => void checkBurnerBalances()} disabled={!executionPlan || Boolean(busy)} className="mt-4 w-full rounded-2xl border border-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent)] disabled:opacity-40">Check burner balances</button>
