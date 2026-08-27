@@ -58,6 +58,11 @@ export function createServer({ config, routeClients, logger = createSafeLogger(c
         return;
       }
 
+      if (req.method === 'GET' && req.url === '/route-health') {
+        await handleRouteHealth(req, res, config, logger);
+        return;
+      }
+
       if (req.method === 'POST' && req.url === '/broadcast') {
         await handleBroadcast(req, res, config, routeById, acceptedHashes, logger);
         return;
@@ -69,6 +74,54 @@ export function createServer({ config, routeClients, logger = createSafeLogger(c
       json(res, 500, { ok: false, error: 'internal_error' });
     }
   });
+}
+
+async function handleRouteHealth(
+  req: IncomingMessage,
+  res: ServerResponse,
+  config: RelayConfig,
+  logger: SafeLogger,
+): Promise<void> {
+  // Auth: reuse HMAC bearer secret (raw secret comparison not exposed; expects Bearer <secret-hmac of 'route-health'>)
+  if (!config.authSecret) {
+    json(res, 503, { ok: false, error: 'relay auth secret is not configured' });
+    return;
+  }
+  const authorization = req.headers.authorization;
+  const expected = createHmac('sha256', config.authSecret).update('route-health').digest('base64url');
+  if (authorization !== `Bearer ${expected}`) {
+    json(res, 401, { ok: false, error: 'unauthorized' });
+    return;
+  }
+  const samples = 15;
+  const body = { jsonrpc: '2.0', id: 1, method: 'eth_chainId', params: [] };
+  const results: Record<string, unknown> = {};
+  for (const route of config.routes) {
+    if (route.type !== 'json-rpc' || !route.url) continue;
+    const times: number[] = [];
+    let lastError: string | undefined;
+    for (let i = 0; i < samples; i++) {
+      const start = Date.now();
+      try {
+        const response = await fetch(route.url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        await response.text();
+        if (response.ok) times.push(Date.now() - start);
+        else lastError = `http ${response.status}`;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : 'fetch failed';
+      }
+    }
+    times.sort((a, b) => a - b);
+    results[route.id] = times.length
+      ? { samples: times.length, p50: times[Math.floor(times.length * 0.5)], p90: times[Math.floor(times.length * 0.9)] ?? times[times.length - 1], min: times[0], max: times[times.length - 1], lastError }
+      : { samples: 0, error: lastError };
+  }
+  logger.info('route health probe completed', { routes: Object.keys(results) });
+  json(res, 200, { ok: true, results });
 }
 
 async function handleBroadcast(
