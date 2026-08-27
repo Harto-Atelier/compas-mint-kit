@@ -242,7 +242,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
   }, [step, receipts, receiptPolling, transactions]);
 
   useEffect(() => {
-    if (step !== "drop" || feedDrops !== null || feedLoading) return;
+    if (step !== "drop" || feedDrops !== null) return;
     let cancelled = false;
     const startTimer = window.setTimeout(() => {
       if (cancelled) return;
@@ -264,7 +264,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
       cancelled = true;
       window.clearTimeout(startTimer);
     };
-  }, [step, feedDrops, feedLoading]);
+  }, [step, feedDrops]);
 
   function resetMessages() {
     setNotice(null);
