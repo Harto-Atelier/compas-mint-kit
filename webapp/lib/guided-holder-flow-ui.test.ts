@@ -116,22 +116,22 @@ test("guided recovery is secret-free, persistent, zero-buffered by default, and 
   assert.match(source, /Maximum network gas · \{formatEther/);
 });
 
-test("guided execution mode surface is feature-flagged, post-simulation, and non-executable", () => {
+test("guided fast path surface is feature-flagged, post-simulation, human-readable, and health-backed", () => {
   assert.match(source, /GUIDED_EXECUTION_MODE_SURFACE_ENABLED/);
   assert.match(source, /NEXT_PUBLIC_GUIDED_EXECUTION_MODE_SURFACE/);
-  assert.match(source, /<ExecutionModeSurface simulationComplete=\{simulationComplete\} \/>/);
+  assert.match(source, /<ExecutionModeSurface simulationComplete=\{simulationComplete\} humanFlow=\{humanFlow\} \/>/);
   assert.match(source, /if \(!GUIDED_EXECUTION_MODE_SURFACE_ENABLED \|\| !simulationComplete\) return null/);
-  assert.match(source, /Execution mode/);
-  assert.match(source, /Standard/);
-  assert.match(source, /Low-latency/);
-  assert.match(source, /Armed Launch \(Advanced\)/);
-  assert.match(source, /mocked placeholder state/);
-  assert.match(source, /Prepared/);
-  assert.match(source, /Signed/);
-  assert.match(source, /Ready/);
-  assert.match(source, /Browser signs locally/);
-  assert.match(source, /relay receives raw signed tx only/);
-  assert.match(source, /no keys/);
-  assert.match(source, /Phase 2/);
+  assert.match(source, /Vía rápida/);
+  assert.match(source, /RelayHealthBadge/);
+  assert.match(source, /NEXT_PUBLIC_COMPAS_RELAY_URL/);
+  assert.match(source, /Preparado/);
+  assert.match(source, /Firmado/);
+  assert.match(source, /Enviado/);
+  assert.match(source, /Confirmado/);
+  assert.match(source, /No completado/);
+  assert.match(source, /Última actualización/);
+  assert.match(source, /Receipt · Blockscout/);
+  assert.match(source, /Avanzado/);
+  assert.doesNotMatch(source, /mocked placeholder state/);
   assert.doesNotMatch(source, /uploadLowLatency|sendLowLatency|startArmedLaunch|relay\.send|relay\.upload/);
 });

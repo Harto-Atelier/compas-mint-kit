@@ -60,6 +60,14 @@ import {
 } from "@/lib/guided-holder-recovery";
 import type { MintDiscoveryError, MintDiscoveryResponse } from "@/lib/mint-types";
 import { createLaunchVaultGenerationGuard, subscribeToLaunchVaultLifecycle } from "@/lib/launch-vault-lifecycle";
+import {
+  blockscoutTxUrl,
+  humanizeMintError,
+  relayHealthLabel,
+  relayHealthStatusFromPayload,
+  type HumanMintFlowStatus,
+  type RelayHealthBadgeStatus,
+} from "@/lib/low-latency-human-ux";
 
 type AdvancedTab = "Vault" | "Mints" | "Disperse";
 
@@ -110,6 +118,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
   const [liveConsentBinding, setLiveConsentBinding] = useState<string | null>(null);
   const [receipts, setReceipts] = useState<GuidedMintReceipt[]>([]);
   const [receiptPolling, setReceiptPolling] = useState(false);
+  const [humanFlow, setHumanFlow] = useState<{ status: HumanMintFlowStatus; updatedAt: string } | null>(null);
   const [burnerBalances, setBurnerBalances] = useState<Record<string, bigint | null>>({});
   const [finished, setFinished] = useState(false);
   const [recoveryJournal, setRecoveryJournal] = useState<GuidedHolderRecoveryJournal | null>(() => {
@@ -230,6 +239,17 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
     setError(null);
   }
 
+  function updateHumanFlow(status: HumanMintFlowStatus) {
+    setHumanFlow({ status, updatedAt: new Date().toLocaleString() });
+  }
+
+  function showHumanError(errorValue: unknown) {
+    const human = humanizeMintError(errorValue);
+    updateHumanFlow("No completado");
+    setError(human.message);
+    if (human.returnToReview) setStep("mint");
+  }
+
   function openAdvanced(tab: AdvancedTab) {
     if (onOpenAdvanced) onOpenAdvanced(tab);
     else window.location.assign(tab === "Vault" ? "/vault" : tab === "Disperse" ? "/disperse" : "/console");
@@ -275,6 +295,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
     setVerifications([]);
     setTransactions([]);
     setReceipts([]);
+    setHumanFlow(null);
     setBurnerBalances({});
     setLiveConsent(false);
     setLiveConsentOpen(false);
@@ -521,6 +542,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
       return;
     }
     setNotice("Every exact bound row simulated successfully. Review explicit final live mint consent next.");
+    updateHumanFlow("Preparado");
     setStep("mint");
   }
 
@@ -543,7 +565,8 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
     setLiveConsentOpen(false);
     setLiveConsent(false);
     setLiveConsentBinding(null);
-    setBusy("Signing and broadcasting each exact row once…");
+    updateHumanFlow("Firmado");
+    setBusy("Signing and sending each exact row once…");
     const next = [...transactions];
     const nextReceipts: GuidedMintReceipt[] = [...receipts];
     try {
@@ -567,6 +590,8 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
             error: sent.error ?? "Browser broadcast failed before a valid transaction hash was returned.",
           };
         const mergedReceipts = mergeGuidedMintReceipts(nextReceipts, [receiptUpdate]);
+        if (sent.status === "broadcast") updateHumanFlow("Enviado");
+        else updateHumanFlow("No completado");
         nextReceipts.splice(0, nextReceipts.length, ...mergedReceipts);
         setTransactions([...next]);
         setReceipts([...nextReceipts]);
@@ -581,13 +606,13 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
         }
       }
       if (next.some((transaction) => transaction.status === "failed")) {
-        setError("One or more broadcasts failed. No row is sent again automatically; review the failed state and recovery handoff.");
+        showHumanError("Vía rápida no disponible — puedes reintentar");
       } else {
         setNotice("Submitted once. Receipt polling now verifies confirmations and NFT mints to the holder.");
       }
     } catch (err) {
       if (vaultGeneration.current.isCurrent(broadcastGeneration)) {
-        setError(err instanceof Error ? err.message : "Live broadcast stopped. Existing submissions remain tracked and no row was retried.");
+        showHumanError(err);
       }
     } finally {
       if (vaultGeneration.current.isCurrent(broadcastGeneration)) {
@@ -636,7 +661,10 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
       fundingRows: Object.values(submissions),
     });
     if (next.length === transactions.length && next.every((receipt) => receipt.status === "Confirmed")) {
+      updateHumanFlow("Confirmado");
       setNotice("Every receipt is confirmed and every NFT recipient is verified as the Compas holder.");
+    } else if (next.some((receipt) => receipt.status === "Failed")) {
+      updateHumanFlow("No completado");
     }
   }
 
@@ -892,7 +920,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
           <div className={CARD}>
             <StepHeading number="07" title="Explicit final live mint consent" body="This is the only live mint gate. It signs each exact simulated burner row once and never sends a row again automatically." />
             <div className="mt-4 grid gap-3 sm:grid-cols-3"><Metric label="Exact rows" value={transactions.length} /><Metric label="Maximum mint value" value={`${formatEther(executionPlan?.maxTotalWei ?? BigInt(0))} ETH`} prominent /><Metric label="Verified recipient" value={holder ? maskVaultAddress(holder.address) : "missing"} /></div>
-            <ExecutionModeSurface simulationComplete={simulationComplete} />
+            <ExecutionModeSurface simulationComplete={simulationComplete} humanFlow={humanFlow} />
             <TransactionRows transactions={transactions} receipts={receipts} />
             <button type="button" onClick={openLiveConsent} disabled={!simulationComplete || Boolean(busy)} className="mt-4 w-full rounded-2xl bg-red-600 px-5 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40">Review final live mint consent</button>
           </div>
@@ -900,8 +928,8 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
 
         {step === "receipts" ? (
           <div className={CARD}>
-            <StepHeading number="08" title="Verify real mint receipts" body="Submitted → Confirming or Unknown → Confirmed or Failed. RPC errors remain retryable; only onchain reverts or bound evidence mismatches fail permanently." />
-            <div className="mt-4 flex flex-wrap gap-2 text-xs font-black"><StatusLegend status="Submitted" /><StatusLegend status="Confirming" /><StatusLegend status="Unknown" /><StatusLegend status="Confirmed" /><StatusLegend status="Failed" /></div>
+            <StepHeading number="08" title="Verify real mint receipts" body="Enviado → Confirmado, or No completado if the chain reports a failure." />
+            <div className="mt-4 flex flex-wrap gap-2 text-xs font-black"><StatusLegend status="Preparado" /><StatusLegend status="Firmado" /><StatusLegend status="Enviado" /><StatusLegend status="Confirmado" /><StatusLegend status="No completado" /></div>
             <TransactionRows transactions={transactions} receipts={receipts} />
             <button type="button" onClick={() => void pollMintReceipts()} disabled={receiptPolling || !receipts.some((receipt) => receipt.status === "Submitted" || receipt.status === "Confirming" || receipt.status === "Unknown")} className="mt-4 w-full rounded-2xl border border-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent)] disabled:opacity-40">{receiptPolling ? "Polling receipts…" : "Poll receipts now"}</button>
             {confirmedReceipts.map((receipt) => <div key={receipt.transactionId} className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800"><p>Verified NFT recipient · {receipt.verifiedRecipient}</p><p className="mt-1 font-mono text-xs">Token {receipt.tokenIds?.join(", ")} · {receipt.confirmations} confirmation(s)</p></div>)}
@@ -930,8 +958,8 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
               <h3 id="guided-live-consent-title" className="mt-2 text-2xl font-black">Sign and send {transactions.length} exact mint row(s)?</h3>
               <div className="mt-4 grid gap-2 rounded-2xl bg-slate-50 p-4 text-sm font-bold sm:grid-cols-2"><p>Chain · {executionPlan.chain.name} ({executionPlan.chain.chainId})</p><p>Collection · {discovery.collection.name}</p><p className="break-all font-mono text-xs sm:col-span-2">Collection address · {discovery.collection.address}</p><p>Maximum mint value · {formatEther(executionPlan.maxTotalWei ?? BigInt(0))} ETH</p><p>Maximum network gas · {formatEther(mintNetworkGasMaxWei)} ETH</p><p className="sm:col-span-2">Verified NFT recipient · {holder?.address}</p></div>
               <TransactionRows transactions={transactions} receipts={receipts} />
-              <label className="mt-4 flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-800"><input type="checkbox" checked={liveConsent} onChange={(event) => setLiveConsent(event.target.checked)} className="mt-1" /><span>I reviewed the exact simulated plan, burner payers, named collection and address, verified holder recipient, maximum mint value, and numeric maximum network gas. Sign and broadcast these rows once now.</span></label>
-              <div className="mt-4 grid gap-2 sm:grid-cols-2"><button type="button" onClick={() => { setLiveConsentOpen(false); setLiveConsent(false); setLiveConsentBinding(null); }} className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-black">Cancel</button><button type="button" onClick={() => void broadcastMints()} disabled={!liveConsent || liveConsentBinding !== executionPlan.binding || Boolean(busy)} className="rounded-2xl bg-red-600 px-5 py-3 text-sm font-black text-white disabled:opacity-40">Broadcast exact mint rows</button></div>
+              <label className="mt-4 flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-800"><input type="checkbox" checked={liveConsent} onChange={(event) => setLiveConsent(event.target.checked)} className="mt-1" /><span>I reviewed the exact simulated plan, burner payers, named collection and address, verified holder recipient, maximum mint value, and numeric maximum network gas. Sign and send these rows once now.</span></label>
+              <div className="mt-4 grid gap-2 sm:grid-cols-2"><button type="button" onClick={() => { setLiveConsentOpen(false); setLiveConsent(false); setLiveConsentBinding(null); }} className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-black">Cancel</button><button type="button" onClick={() => void broadcastMints()} disabled={!liveConsent || liveConsentBinding !== executionPlan.binding || Boolean(busy)} className="rounded-2xl bg-red-600 px-5 py-3 text-sm font-black text-white disabled:opacity-40">Sign and send</button></div>
             </div>
           </div>
         ) : null}
@@ -957,52 +985,87 @@ function Metric({ label, value, prominent = false }: { label: string; value: str
 function TransactionRows({ transactions, receipts }: { transactions: BrowserPreparedMint[]; receipts: GuidedMintReceipt[] }) {
   return <div className="mt-4 grid gap-2">{transactions.map((transaction) => {
     const receipt = receipts.find((candidate) => candidate.transactionId === transaction.id && candidate.binding === transaction.binding);
-    return <article key={`${transaction.binding}:${transaction.id}`} className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-3 text-sm font-bold"><div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><p>{transaction.walletAlias} · {maskVaultAddress(transaction.walletAddress)} → {maskVaultAddress(transaction.recipientAddress)}</p><span className="text-xs font-black uppercase tracking-[0.12em]">{receipt?.status ?? transaction.status}</span></div><p className="mt-1 font-mono text-xs text-[color:var(--compas-muted)]">{formatEther(transaction.request.value)} ETH mint value{transaction.simulationGas ? ` · ${transaction.simulationGas} simulated gas` : ""}</p>{transaction.explorerUrl ? <a href={transaction.explorerUrl} target="_blank" rel="noreferrer" className="mt-1 block break-all text-xs font-black text-[color:var(--compas-accent)]">{transaction.hash}</a> : null}{receipt?.error || transaction.error ? <p className="mt-2 text-xs font-bold text-red-700">{receipt?.error ?? transaction.error}</p> : null}</article>;
+    const humanStatus: HumanMintFlowStatus = receipt?.status === "Confirmed" ? "Confirmado" : receipt?.status === "Failed" || transaction.status === "failed" ? "No completado" : receipt || transaction.status === "broadcast" ? "Enviado" : transaction.status === "simulated" ? "Preparado" : "Preparado";
+    const hash = receipt?.hash || transaction.hash;
+    return <article key={`${transaction.binding}:${transaction.id}`} className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-3 text-sm font-bold"><div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><p>{transaction.walletAlias} · {maskVaultAddress(transaction.walletAddress)} → {maskVaultAddress(transaction.recipientAddress)}</p><span className="text-xs font-black uppercase tracking-[0.12em]">{humanStatus}</span></div><p className="mt-1 font-mono text-xs text-[color:var(--compas-muted)]">{formatEther(transaction.request.value)} ETH mint value{transaction.simulationGas ? ` · ${transaction.simulationGas} gas estimate` : ""}</p>{receipt?.status === "Confirmed" && hash ? <a href={blockscoutTxUrl(hash)} target="_blank" rel="noreferrer" className="mt-2 block break-all rounded-xl border border-[color:var(--compas-accent)] px-3 py-2 text-xs font-black text-[color:var(--compas-accent)]">Receipt · Blockscout</a> : null}{receipt?.error || transaction.error ? <p className="mt-2 text-xs font-bold text-red-700">{humanizeMintError(receipt?.error ?? transaction.error).message}</p> : null}<details className="mt-2"><summary className="cursor-pointer text-xs font-black text-[color:var(--compas-muted)]">Avanzado</summary><p className="mt-1 break-all font-mono text-[10px] text-[color:var(--compas-muted)]">{hash ?? "No transaction hash yet"}</p></details></article>;
   })}</div>;
 }
 
-function StatusLegend({ status }: { status: GuidedMintReceipt["status"] }) {
+function StatusLegend({ status }: { status: HumanMintFlowStatus }) {
   return <span className="rounded-full border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] px-3 py-1.5">{status}</span>;
 }
 
-type LowLatencyPlaceholderStatus = { label: "Prepared" | "Signed" | "Ready"; value: string };
-
-function ExecutionModeSurface({ simulationComplete }: { simulationComplete: boolean }) {
+function ExecutionModeSurface({ simulationComplete, humanFlow }: { simulationComplete: boolean; humanFlow: { status: HumanMintFlowStatus; updatedAt: string } | null }) {
   if (!GUIDED_EXECUTION_MODE_SURFACE_ENABLED || !simulationComplete) return null;
 
-  const lowLatencyPlaceholderState: LowLatencyPlaceholderStatus[] = [
-    { label: "Prepared", value: "prepared from mocked placeholder state" },
-    { label: "Signed", value: "signed placeholder only" },
-    { label: "Ready", value: "ready placeholder; relay primitive not integrated" },
-  ];
+  const steps: HumanMintFlowStatus[] = ["Preparado", "Firmado", "Enviado", "Confirmado"];
+  const activeIndex = humanFlow ? steps.indexOf(humanFlow.status) : 0;
 
   return (
-    <section className="mt-4 rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-4" aria-label="Execution mode">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+    <section className="mt-4 rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-4" aria-label="Vía rápida">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-xs font-black uppercase tracking-[0.18em] text-[color:var(--compas-accent)]">Execution mode</p>
-          <p className="mt-1 text-sm font-bold text-[color:var(--compas-muted)]">Feature-flag preview only after simulation. Browser signs locally; relay receives raw signed tx only; no keys. No relay upload or broadcast button is wired until primitives are integrated.</p>
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-[color:var(--compas-accent)]">Vía rápida</p>
+          <p className="mt-1 text-sm font-bold text-[color:var(--compas-muted)]">Firma una vez. Después mira el estado y el recibo.</p>
         </div>
-        <span className="rounded-full border border-[color:var(--compas-line)] bg-[color:var(--compas-card)] px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">Non-executable</span>
+        <RelayHealthBadge />
       </div>
-      <div className="mt-3 grid gap-2 lg:grid-cols-3">
-        <article className="rounded-2xl border-2 border-[color:var(--compas-accent)] bg-[color:var(--compas-card)] p-3">
-          <div className="flex items-center justify-between gap-2"><h3 className="text-sm font-black">Standard</h3><span className="text-[10px] font-black uppercase tracking-[0.14em] text-[color:var(--compas-accent)]">Current path</span></div>
-          <p className="mt-2 text-xs font-bold text-[color:var(--compas-muted)]">Keep the existing explicit final live consent flow. This card does not execute anything.</p>
-        </article>
-        <article className="rounded-2xl border border-dashed border-[color:var(--compas-line)] bg-[color:var(--compas-card)] p-3">
-          <div className="flex items-center justify-between gap-2"><h3 className="text-sm font-black">Low-latency</h3><span className="text-[10px] font-black uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">Preview</span></div>
-          <div className="mt-2 grid gap-1">
-            {lowLatencyPlaceholderState.map((item) => <p key={item.label} className="rounded-xl bg-[color:var(--compas-soft)] px-3 py-2 text-xs font-bold"><span className="font-black">{item.label}</span> · {item.value}</p>)}
-          </div>
-        </article>
-        <article className="rounded-2xl border border-dashed border-[color:var(--compas-line)] bg-[color:var(--compas-card)] p-3 opacity-70">
-          <div className="flex items-center justify-between gap-2"><h3 className="text-sm font-black">Armed Launch (Advanced)</h3><span className="text-[10px] font-black uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">Disabled</span></div>
-          <p className="mt-2 text-xs font-bold text-[color:var(--compas-muted)]">Advanced launch timing stays disabled until Phase 2. No scheduler, relay, upload, signing, or broadcast primitive is connected from this Guide surface.</p>
-        </article>
+      <div className="mt-3 grid gap-2 sm:grid-cols-4">
+        {steps.map((status, index) => {
+          const isDone = humanFlow?.status === "Confirmado" || (activeIndex >= 0 && index <= activeIndex && humanFlow?.status !== "No completado");
+          const isCurrent = humanFlow?.status === status;
+          return <div key={status} className={`rounded-2xl border p-3 ${isCurrent ? "border-2 border-[color:var(--compas-accent)] bg-[color:var(--compas-card)]" : "border-[color:var(--compas-line)] bg-[color:var(--compas-card)]"}`}><p className="text-sm font-black">{status}</p><p className="mt-1 text-[10px] font-black uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">{isDone ? "Listo" : "Pendiente"}</p></div>;
+        })}
       </div>
+      {humanFlow ? <p className="mt-3 text-xs font-bold text-[color:var(--compas-muted)]">Última actualización: {humanFlow.updatedAt}</p> : null}
+      {humanFlow?.status === "No completado" ? <p className="mt-3 rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-card)] p-3 text-sm font-black text-red-700">No completado</p> : null}
+      <details className="mt-3 rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-card)] p-3">
+        <summary className="cursor-pointer text-xs font-black uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">Avanzado</summary>
+        <p className="mt-2 text-xs font-semibold text-[color:var(--compas-muted)]">Technical timing, relay, nonce, route, RPC, sequencer, HMAC, broadcast, and raw tx details stay hidden here.</p>
+      </details>
     </section>
   );
+}
+
+function RelayHealthBadge() {
+  const [status, setStatus] = useState<RelayHealthBadgeStatus>("loading");
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+
+  useEffect(() => {
+    const relayUrl = process.env.NEXT_PUBLIC_COMPAS_RELAY_URL?.trim();
+    let cancelled = false;
+    let timer: number | null = null;
+
+    async function checkHealth() {
+      if (!relayUrl) {
+        setStatus("unavailable");
+        setUpdatedAt(new Date().toLocaleTimeString());
+        return;
+      }
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 5_000);
+      try {
+        const response = await fetch(`${relayUrl.replace(/\/+$/, "")}/health`, { cache: "no-store", signal: controller.signal });
+        const payload = response.ok ? await response.json().catch(() => null) : null;
+        if (!cancelled) setStatus(relayHealthStatusFromPayload(payload));
+      } catch {
+        if (!cancelled) setStatus("unavailable");
+      } finally {
+        window.clearTimeout(timeout);
+        if (!cancelled) setUpdatedAt(new Date().toLocaleTimeString());
+      }
+    }
+
+    void checkHealth();
+    timer = window.setInterval(() => void checkHealth(), 45_000);
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearInterval(timer);
+    };
+  }, []);
+
+  const positive = status === "active";
+  return <div className={`w-fit rounded-full border px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.14em] ${positive ? "border-[color:var(--compas-accent)] bg-[color:var(--compas-accent)] text-[color:var(--compas-accent-ink)]" : "border-[color:var(--compas-line)] bg-[color:var(--compas-card)] text-[color:var(--compas-muted)]"}`} title={updatedAt ? `Última comprobación: ${updatedAt}` : undefined}>{relayHealthLabel(status)}</div>;
 }
 
 function NumberInput({ label, value, onChange, min }: { label: string; value: number; onChange: (value: number) => void; min: number }) {
