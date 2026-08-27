@@ -257,7 +257,7 @@ function StatusRow({ activeLaunchId }: { activeLaunchId: string }) {
 function OperatorFlow({ active, setActive }: { active: MainTab; setActive: (tab: MainTab) => void }) {
   const steps: Array<{ tab: MainTab; label: string; detail: string }> = [
     { tab: "Mints", label: "Drop", detail: "Paste collection" },
-    { tab: "Watch", label: "Scan", detail: "Rank drops" },
+    { tab: "Watch", label: "Select mint", detail: "Pick drop" },
     { tab: "Wallets", label: "Wallets", detail: "Stage addresses" },
     { tab: "Vault", label: "Vault", detail: "Unlock burners" },
     { tab: "Reports", label: "Review", detail: "Receipts + txs" },
