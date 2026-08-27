@@ -856,11 +856,11 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
 
         {step === "drop" ? (
           <div className={CARD}>
-            <StepHeading number="03" title="Select the mint" body="Choose the drop you want to mint. Only a live public mint can continue." />
+            <StepHeading number="03" title="Choose mint" body="Paste the mint link or contract. We’ll check if it’s live before you continue." />
             <form onSubmit={scanDrop} className="mt-4 grid gap-2 sm:grid-cols-[1fr_150px_auto]">
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="OpenSea slug, URL, or 0x contract" className={FIELD} />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Mint link or contract" className={FIELD} />
               <select value={chainKey} onChange={(event) => setChainKey(event.target.value)} className={FIELD}><option value="base">Base</option><option value="ethereum">Ethereum</option></select>
-              <button type="submit" disabled={Boolean(busy)} className="rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:opacity-50">Select mint</button>
+              <button type="submit" disabled={Boolean(busy)} className="rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:opacity-50">Continue</button>
             </form>
           </div>
         ) : null}
