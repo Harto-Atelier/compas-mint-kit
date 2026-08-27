@@ -59,6 +59,7 @@ import {
   type GuidedHolderRecoveryJournal,
 } from "@/lib/guided-holder-recovery";
 import type { MintDiscoveryError, MintDiscoveryResponse } from "@/lib/mint-types";
+import type { OpenSeaDropCard as GuidedFeedDrop, OpenSeaDropsFeedResult } from "@/lib/opensea-drops-feed";
 import { createLaunchVaultGenerationGuard, subscribeToLaunchVaultLifecycle } from "@/lib/launch-vault-lifecycle";
 import {
   blockscoutTxUrl,
@@ -95,6 +96,9 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
   const [query, setQuery] = useState("");
   const [chainKey, setChainKey] = useState("base");
   const [discovery, setDiscovery] = useState<MintDiscoveryResponse | null>(null);
+  const [feedDrops, setFeedDrops] = useState<GuidedFeedDrop[] | null>(null);
+  const [feedLoading, setFeedLoading] = useState(false);
+  const [feedError, setFeedError] = useState<string | null>(null);
 
   const [quantityPerBurner, setQuantityPerBurner] = useState(1);
   const [mintGasLimit, setMintGasLimit] = useState(250_000);
@@ -237,6 +241,31 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, receipts, receiptPolling, transactions]);
 
+  useEffect(() => {
+    if (step !== "drop" || feedDrops !== null || feedLoading) return;
+    let cancelled = false;
+    const startTimer = window.setTimeout(() => {
+      if (cancelled) return;
+      setFeedLoading(true);
+      fetch(`/api/mints/opensea-drops?mode=live&limit=12`, { cache: "no-store" })
+        .then(async (response) => {
+          const body = (await response.json()) as OpenSeaDropsFeedResult | { ok: false; error?: string };
+          if (!response.ok || !body.ok) throw new Error(("error" in body && body.error) || "Live mints unavailable right now.");
+          if (!cancelled) setFeedDrops(body.items);
+        })
+        .catch((err) => {
+          if (!cancelled) setFeedError(err instanceof Error ? err.message : "Live mints unavailable right now.");
+        })
+        .finally(() => {
+          if (!cancelled) setFeedLoading(false);
+        });
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(startTimer);
+    };
+  }, [step, feedDrops, feedLoading]);
+
   function resetMessages() {
     setNotice(null);
     setError(null);
@@ -349,18 +378,22 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
 
   async function scanDrop(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    await performDropScan(query, chainKey);
+  }
+
+  async function performDropScan(rawQuery: string, rawChainKey: string) {
     resetMessages();
-    if (!query.trim()) {
+    if (!rawQuery.trim()) {
       setError("Paste an OpenSea slug, collection URL, or public contract address.");
       return;
     }
-    if (chainKey !== "base" && chainKey !== "ethereum") {
+    if (rawChainKey !== "base" && rawChainKey !== "ethereum") {
       setError("The holder guide supports Base and Ethereum. Advanced tools cover operator-configured chains.");
       return;
     }
     setBusy("Reading public drop configuration…");
     try {
-      const params = new URLSearchParams({ q: query.trim(), chain: chainKey });
+      const params = new URLSearchParams({ q: rawQuery.trim(), chain: rawChainKey });
       const response = await fetch(`/api/mints/discover?${params.toString()}`, { cache: "no-store" });
       const body = (await response.json()) as MintDiscoveryResponse | MintDiscoveryError;
       if (!response.ok || !body.ok) throw new Error(body.ok ? "Drop scan failed." : body.error);
@@ -375,6 +408,18 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
     } finally {
       setBusy(null);
     }
+  }
+
+  function selectFeedDrop(drop: GuidedFeedDrop) {
+    const feedChain = drop.chain.toLowerCase() === "ethereum" ? "ethereum" : drop.chain.toLowerCase() === "base" ? "base" : null;
+    if (!feedChain) {
+      setError("This drop is on an unsupported chain. The guide covers Base and Ethereum.");
+      return;
+    }
+    const value = drop.slug || drop.contractAddress;
+    setQuery(value);
+    setChainKey(feedChain);
+    void performDropScan(value, feedChain);
   }
 
   async function reviewFunding() {
@@ -883,12 +928,38 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
 
         {step === "drop" ? (
           <div className={CARD}>
-            <StepHeading number="04" title="Select mint" body="Pick the live OpenSea mint." />
-            <form onSubmit={scanDrop} className="mt-4 grid gap-2 sm:grid-cols-[1fr_150px_auto]">
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Mint link or contract" className={FIELD} />
-              <select value={chainKey} onChange={(event) => setChainKey(event.target.value)} className={FIELD}><option value="base">Base</option><option value="ethereum">Ethereum</option></select>
-              <button type="submit" disabled={Boolean(busy)} className="rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:opacity-50">Continue</button>
-            </form>
+            <StepHeading number="04" title="Select mint" body="Tap a live mint, or paste a link below." />
+            {feedLoading ? <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{Array.from({ length: 6 }).map((_, index) => <div key={index} className="h-32 animate-pulse rounded-3xl bg-[color:var(--compas-soft)]" />)}</div> : null}
+            {!feedLoading && feedError && !feedDrops?.length ? <p className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-800">Live mints unavailable — paste a link below.</p> : null}
+            {!feedLoading && feedDrops?.length ? (
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {feedDrops.map((drop) => (
+                  <button key={`${drop.chain}:${drop.contractAddress}`} type="button" disabled={Boolean(busy)} onClick={() => selectFeedDrop(drop)} className="group relative h-32 overflow-hidden rounded-3xl border border-[color:var(--compas-line)] bg-slate-900 text-left transition hover:-translate-y-0.5 hover:border-[color:var(--compas-accent)] disabled:opacity-60">
+                    {drop.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={drop.imageUrl} alt="" className="absolute inset-0 h-full w-full object-cover opacity-75 transition group-hover:scale-105" />
+                    ) : <div className="absolute inset-0 bg-gradient-to-br from-slate-800 to-slate-950" />}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent" />
+                    <div className="absolute inset-x-0 bottom-0 p-3">
+                      <p className="truncate text-sm font-black text-white">{drop.name}</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-black uppercase">
+                        {drop.isMinting ? <span className="rounded-full border border-emerald-400 bg-emerald-400/15 px-2 py-0.5 text-emerald-300">Live</span> : null}
+                        <span className="rounded-full bg-white/10 px-2 py-0.5 text-slate-200">{drop.chain}</span>
+                        {drop.mintPriceEth !== null ? <span className="rounded-full bg-white/10 px-2 py-0.5 font-mono text-slate-200">{drop.mintPriceEth} ETH</span> : null}
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <details className="mt-4 rounded-2xl border border-dashed border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-3" open={!feedLoading && !feedDrops?.length}>
+              <summary className="cursor-pointer text-xs font-black text-[color:var(--compas-muted)]">Or paste a mint link</summary>
+              <form onSubmit={scanDrop} className="mt-3 grid gap-2 sm:grid-cols-[1fr_150px_auto]">
+                <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Mint link or contract" className={FIELD} />
+                <select value={chainKey} onChange={(event) => setChainKey(event.target.value)} className={FIELD}><option value="base">Base</option><option value="ethereum">Ethereum</option></select>
+                <button type="submit" disabled={Boolean(busy)} className="rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:opacity-50">Continue</button>
+              </form>
+            </details>
           </div>
         ) : null}
 
@@ -912,7 +983,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
 
         {step === "funding" && fundingPlan ? (
           <div className={CARD}>
-            <StepHeading number="05" title="Fund" body="Send only what this mint needs." />
+            <StepHeading number="06" title="Fund" body="Send only what this mint needs." />
             <div className="mt-4 grid gap-3 sm:grid-cols-3">
               <Metric label="Maximum mint value" value={`${formatEther(executionPlan?.maxTotalWei ?? BigInt(0))} ETH`} prominent />
               <Metric label="Network gas estimate / max" value={`${formatEther(networkGasMaxWei)} ETH`} />
@@ -933,7 +1004,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
 
         {step === "simulate" ? (
           <div className={CARD}>
-            <StepHeading number="06" title="Check" body="Make sure the mint is ready before signing." />
+            <StepHeading number="07" title="Check" body="Make sure the mint is ready before signing." />
             <button type="button" onClick={() => void simulateMint()} disabled={!fundingComplete || !executionPlan || Boolean(busy)} className="mt-4 w-full rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:cursor-not-allowed disabled:opacity-40">Check mint</button>
             {transactions.length > 0 ? <TransactionRows transactions={transactions} receipts={receipts} /> : null}
           </div>
@@ -941,7 +1012,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
 
         {step === "mint" ? (
           <div className={CARD}>
-            <StepHeading number="07" title="Sign" body="Final review. Nothing moves until you approve." />
+            <StepHeading number="08" title="Sign" body="Final review. Nothing moves until you approve." />
             <div className="mt-4 grid gap-3 sm:grid-cols-2"><Metric label="Maximum spend" value={`${formatEther(executionPlan?.maxTotalWei ?? BigInt(0))} ETH`} prominent /><Metric label="Recipient" value={holder ? maskVaultAddress(holder.address) : "missing"} /></div>
             <ExecutionModeSurface simulationComplete={simulationComplete} humanFlow={humanFlow} />
             <TransactionRows transactions={transactions} receipts={receipts} />
@@ -951,7 +1022,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
 
         {step === "receipts" ? (
           <div className={CARD}>
-            <StepHeading number="08" title="Receipt" body="See what completed." />
+            <StepHeading number="09" title="Receipt" body="See what completed." />
             <TransactionRows transactions={transactions} receipts={receipts} />
             <button type="button" onClick={() => void pollMintReceipts()} disabled={receiptPolling || !receipts.some((receipt) => receipt.status === "Submitted" || receipt.status === "Confirming" || receipt.status === "Unknown")} className="mt-4 w-full rounded-2xl border border-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent)] disabled:opacity-40">{receiptPolling ? "Checking…" : "Check receipt"}</button>
             {confirmedReceipts.map((receipt) => <div key={receipt.transactionId} className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800"><p>Verified NFT recipient · {receipt.verifiedRecipient}</p><p className="mt-1 font-mono text-xs">Token {receipt.tokenIds?.join(", ")} · {receipt.confirmations} confirmation(s)</p></div>)}
@@ -961,7 +1032,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
 
         {step === "finish" ? (
           <div className={CARD}>
-            <StepHeading number="09" title="Finish" body="Confirm nothing is left behind." />
+            <StepHeading number="10" title="Finish" body="Confirm nothing is left behind." />
             {finished ? <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-emerald-800"><p className="text-xl font-black">Safe finish complete</p><p className="mt-2 text-sm font-bold">In-memory signers are gone. Verified receipt evidence remains visible in this session and the encrypted Vault was not wiped.</p></div> : (
               <>
                 <button type="button" onClick={() => void checkBurnerBalances()} disabled={!executionPlan || Boolean(busy)} className="mt-4 w-full rounded-2xl border border-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent)] disabled:opacity-40">Check burner balances</button>
