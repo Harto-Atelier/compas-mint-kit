@@ -1,5 +1,7 @@
 import { Interface, JsonRpcProvider, Wallet, formatEther, id, keccak256, parseEther } from "ethers";
 
+import { isAlreadyKnownBroadcastError } from "./guided-fast-path";
+
 export type BrowserBroadcastChainKey = "ethereum" | "base" | "robinhood";
 export type BrowserMintStatus = "prepared" | "simulated" | "broadcast" | "failed";
 export type BrowserMintStageSource = "onchain-seadrop" | "opensea-signed-preview" | "mock-preview";
@@ -715,6 +717,81 @@ export async function broadcastPreparedBrowserMint(
     if (!context.revoked && TX_CONTEXT.get(tx) === context) context.broadcasting = false;
     trace("broadcast-preflight-failed");
     throw error;
+  }
+}
+
+/**
+ * Terminal fast-path result row. The signed transaction was accepted by the
+ * fast path with its locally computed expected hash, so the row is marked
+ * broadcast without ever re-signing or re-sending; receipt polling verifies
+ * inclusion exactly like the direct RPC path.
+ */
+export function markSignedMintBroadcastViaFastPath(signed: BrowserSignedMint): BrowserPreparedMint {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(signed.expectedHash)) {
+    throw new Error("A valid locally computed expected hash is required before marking a fast-path row broadcast.");
+  }
+  return makeSerializablePreparedMint({
+    ...signed.transaction,
+    status: "broadcast",
+    hash: signed.expectedHash,
+    explorerUrl: explorerTxUrl(signed.transaction.chain.key, signed.expectedHash),
+    error: undefined,
+    broadcastAttempted: true,
+  });
+}
+
+/**
+ * Direct RPC fallback for an already-signed row whose fast-path send was not
+ * proven accepted. It rebroadcasts the EXACT same signed bytes (same hash), so
+ * it can never double-mint, and an "already known" answer counts as accepted.
+ * The row always becomes terminal: broadcast on acceptance, failed otherwise.
+ */
+export async function broadcastSignedMintViaRpc(
+  signed: BrowserSignedMint,
+  deps?: {
+    provider?: { getNetwork(): Promise<{ chainId: bigint | number }>; send(method: string, params: unknown[]): Promise<unknown> };
+    timing?: BrowserBroadcastTimingSink;
+  },
+): Promise<BrowserPreparedMint> {
+  const tx = signed.transaction;
+  const trace = createBroadcastTimingTrace(tx.id, deps?.timing);
+  trace("fallback-direct-start");
+  try {
+    const provider = deps?.provider ?? new JsonRpcProvider(tx.rpcUrl);
+    const network = await provider.getNetwork();
+    trace("rpc-chain-check-complete");
+    if (BigInt(network.chainId) !== BigInt(tx.chain.chainId)) {
+      throw new Error(`RPC chain ID ${network.chainId.toString()} does not match expected ${tx.chain.chainId}.`);
+    }
+    const raw = signed.rawSignedTransaction.revealForBroadcast({
+      explicitConsent: true,
+      lowLatencyBinding: signed.lowLatencyBinding,
+    });
+    trace("send-raw-transaction-start");
+    let reportedHash: string;
+    try {
+      reportedHash = String(await provider.send("eth_sendRawTransaction", [raw]));
+    } catch (sendError) {
+      if (!isAlreadyKnownBroadcastError(sendError)) throw sendError;
+      // The exact same bytes are already in the mempool: definite acceptance.
+      reportedHash = signed.expectedHash;
+    }
+    trace("send-raw-transaction-response");
+    if (reportedHash.toLowerCase() !== signed.expectedHash.toLowerCase()) {
+      throw new Error("Direct RPC broadcast returned a hash that does not match the locally computed expected hash. Recover manually; do not retry automatically.");
+    }
+    trace("broadcast-hash-validated");
+    return makeSerializablePreparedMint({
+      ...tx,
+      status: "broadcast",
+      hash: signed.expectedHash,
+      explorerUrl: explorerTxUrl(tx.chain.key, signed.expectedHash),
+      error: undefined,
+      broadcastAttempted: true,
+    });
+  } catch (error) {
+    trace("broadcast-failed");
+    return makeSerializablePreparedMint({ ...tx, status: "failed", error: safeMessageOf(error), broadcastAttempted: true });
   }
 }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { formatEther, parseEther, parseUnits } from "ethers";
+import { JsonRpcProvider, formatEther, parseEther, parseUnits } from "ethers";
 
 import {
   LAUNCH_VAULT_STORAGE_KEY,
@@ -37,17 +37,35 @@ import type { BurnerFundingPlan } from "@/lib/burner-funding";
 import { fetchSignedGateSession, readGateSession, type CompasGateSession } from "@/lib/compas-gate";
 import {
   broadcastPreparedBrowserMint,
+  broadcastSignedMintViaRpc,
   createSubmittedMintReceipt,
   invalidateBrowserMintTransactions,
   markGuidedMintReceiptsForReconciliation,
+  markSignedMintBroadcastViaFastPath,
   mergeGuidedMintReceipts,
   pollPreparedBrowserMintReceipt,
+  prepareLowLatencyBrowserMint,
   revokePreparedBrowserMintSigners,
+  signPreparedBrowserMint,
   simulatePreparedBrowserMint,
   type BrowserMintPlan,
   type BrowserPreparedMint,
+  type BrowserSignedMint,
   type GuidedMintReceipt,
 } from "@/lib/browser-broadcast";
+import { fireSignedMintsViaRelay } from "@/lib/low-latency-relay-client";
+import {
+  classifyGuidedRelayFireError,
+  classifyGuidedRelayFireResult,
+  decideGuidedFastPathAction,
+  describeGuidedFastPathTiming,
+  formatGuidedFastPathTiming,
+  guidedFastPathLaunchId,
+  resolveGuidedRelayUrl,
+  shouldUseGuidedFastPath,
+  type GuidedFastPathFireOutcome,
+  type GuidedFastPathTiming,
+} from "@/lib/guided-fast-path";
 import {
   GUIDED_HOLDER_RECOVERY_STORAGE_KEY,
   buildGuidedHolderRecoveryJournal,
@@ -79,7 +97,17 @@ type GuidedHolderFlowProps = {
 
 const FIELD = "h-11 w-full rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-card)] px-3 text-sm font-bold text-[color:var(--compas-ink)] outline-none focus:border-[color:var(--compas-accent)]";
 const CARD = "rounded-[1.75rem] border border-[color:var(--compas-line)] bg-[color:var(--compas-card)] p-4 sm:p-5";
-const GUIDED_EXECUTION_MODE_SURFACE_ENABLED = process.env.NEXT_PUBLIC_GUIDED_EXECUTION_MODE_SURFACE === "1" || process.env.NEXT_PUBLIC_GUIDED_EXECUTION_MODE_SURFACE === "true";
+// The human execution-mode surface is ON by default; set NEXT_PUBLIC_GUIDED_EXECUTION_MODE_SURFACE to "0"/"false" to hide it.
+const GUIDED_EXECUTION_MODE_SURFACE_ENABLED = process.env.NEXT_PUBLIC_GUIDED_EXECUTION_MODE_SURFACE !== "0" && process.env.NEXT_PUBLIC_GUIDED_EXECUTION_MODE_SURFACE !== "false";
+const GUIDED_RELAY_URL = resolveGuidedRelayUrl(process.env.NEXT_PUBLIC_COMPAS_RELAY_URL ?? null);
+
+function nowMs(): number {
+  return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+}
+
+function timingKeyOf(transaction: Pick<BrowserPreparedMint, "binding" | "id">): string {
+  return `${transaction.binding}:${transaction.id}`;
+}
 
 export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: GuidedHolderFlowProps) {
   const [holder, setHolder] = useState<CompasGateSession | null>(null);
@@ -123,6 +151,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
   const [liveConsentBinding, setLiveConsentBinding] = useState<string | null>(null);
   const [receipts, setReceipts] = useState<GuidedMintReceipt[]>([]);
   const [receiptPolling, setReceiptPolling] = useState(false);
+  const [mintTimings, setMintTimings] = useState<Record<string, GuidedFastPathTiming>>({});
   const [humanFlow, setHumanFlow] = useState<{ status: HumanMintFlowStatus; updatedAt: string } | null>(null);
   const [burnerBalances, setBurnerBalances] = useState<Record<string, bigint | null>>({});
   const [finished, setFinished] = useState(false);
@@ -136,6 +165,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
   });
   const [recoveryBalances, setRecoveryBalances] = useState<Record<string, bigint | null>>({});
   const vaultGeneration = useRef(createLaunchVaultGenerationGuard());
+  const relayHealth = useRelayHealth();
 
   useEffect(() => {
     let cancelled = false;
@@ -328,6 +358,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
     setVerifications([]);
     setTransactions([]);
     setReceipts([]);
+    setMintTimings({});
     setHumanFlow(null);
     setBurnerBalances({});
     setLiveConsent(false);
@@ -615,19 +646,25 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
     setLiveConsent(false);
     setLiveConsentBinding(null);
     updateHumanFlow("Firmado");
+    // The low-latency fast path is the standard mode; the direct RPC path stays as the safe fallback.
+    const fastPath = shouldUseGuidedFastPath({ relayUrl: GUIDED_RELAY_URL, health: relayHealth.status }) && GUIDED_RELAY_URL
+      ? { relayUrl: GUIDED_RELAY_URL, launchId: guidedFastPathLaunchId(discovery?.collection.address), chainId: executionPlan.chain.chainId }
+      : null;
     setBusy("Signing and sending each exact row once…");
     const next = [...transactions];
     const nextReceipts: GuidedMintReceipt[] = [...receipts];
+    const nextTimings: Record<string, GuidedFastPathTiming> = { ...mintTimings };
     try {
       for (const [index, transaction] of next.entries()) {
         if (transaction.status === "broadcast" || transaction.broadcastAttempted) continue;
         if (!vaultGeneration.current.isCurrent(broadcastGeneration)) throw new Error("Vault authority changed before this row was sent. No automatic retry was attempted.");
-        const sent = await broadcastPreparedBrowserMint(transaction, {
-          explicitConsent: true,
-          consentBinding: executionPlan.binding,
+        const { sent, timing } = await executeGuidedMintRow(transaction, {
+          fastPath,
+          planBinding: executionPlan.binding,
           isAuthorityCurrent: () => vaultGeneration.current.isCurrent(broadcastGeneration),
         });
         next[index] = sent;
+        if (timing) nextTimings[timingKeyOf(sent)] = timing;
         const receiptUpdate = sent.status === "broadcast"
           ? createSubmittedMintReceipt(sent)
           : {
@@ -644,6 +681,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
         nextReceipts.splice(0, nextReceipts.length, ...mergedReceipts);
         setTransactions([...next]);
         setReceipts([...nextReceipts]);
+        setMintTimings({ ...nextTimings });
         persistRecoveryEvidence({
           plan: executionPlan,
           transactionRows: next,
@@ -679,6 +717,103 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
       }
       setStep(nextReceipts.length > 0 ? "receipts" : "mint");
     }
+  }
+
+  /**
+   * Execute one guided mint row. Standard mode is the low-latency fast path:
+   * prepare exact nonce/gas/EIP-1559 fields, sign locally in memory, then FIRE
+   * through the fast path. If the fast path is unavailable before signing, the
+   * row uses the existing direct RPC broadcast. If signed bytes exist but fast
+   * acceptance was not proven, the exact same bytes are rebroadcast over direct
+   * RPC (same hash — no double mint), so no signed row is ever left in limbo.
+   */
+  async function executeGuidedMintRow(
+    transaction: BrowserPreparedMint,
+    deps: {
+      fastPath: { relayUrl: string; launchId: string; chainId: number } | null;
+      planBinding: string;
+      isAuthorityCurrent: () => boolean;
+    },
+  ): Promise<{ sent: BrowserPreparedMint; timing?: GuidedFastPathTiming }> {
+    if (!deps.fastPath) {
+      const directStart = nowMs();
+      const sent = await broadcastPreparedBrowserMint(transaction, {
+        explicitConsent: true,
+        consentBinding: deps.planBinding,
+        isAuthorityCurrent: deps.isAuthorityCurrent,
+      });
+      return { sent, timing: { route: "direct", sendMs: nowMs() - directStart } };
+    }
+
+    let signed: BrowserSignedMint | null = null;
+    let outcome: GuidedFastPathFireOutcome = "network-failed";
+    let signMs: number | undefined;
+    let fireMs: number | undefined;
+    try {
+      const provider = new JsonRpcProvider(transaction.rpcUrl);
+      const [network, nonce, feeData] = await Promise.all([
+        provider.getNetwork(),
+        provider.getTransactionCount(transaction.walletAddress, "pending"),
+        provider.getFeeData(),
+      ]);
+      if (BigInt(network.chainId) !== BigInt(transaction.chain.chainId)) {
+        throw new Error(`RPC chain ID ${network.chainId.toString()} does not match expected ${transaction.chain.chainId}.`);
+      }
+      if (!deps.isAuthorityCurrent()) throw new Error("Vault authority changed before this row was signed. No transaction was sent.");
+      const boundMaxFee = transaction.request.maxFeePerGas ?? feeData.maxFeePerGas ?? undefined;
+      const boundGasLimit = transaction.request.gasLimit ?? (transaction.simulationGas ? (BigInt(transaction.simulationGas) * BigInt(12)) / BigInt(10) : undefined);
+      if (boundMaxFee === undefined || boundGasLimit === undefined) throw new Error("Prepared gas limit and maximum fee are required before the fast path.");
+      const suggestedPriority = feeData.maxPriorityFeePerGas ?? boundMaxFee;
+      const prepared = prepareLowLatencyBrowserMint(transaction, {
+        nonce,
+        gasLimit: boundGasLimit,
+        maxFeePerGas: boundMaxFee,
+        maxPriorityFeePerGas: suggestedPriority < boundMaxFee ? suggestedPriority : boundMaxFee,
+      });
+      const signStart = nowMs();
+      signed = await signPreparedBrowserMint(prepared, {
+        explicitConsent: true,
+        consentBinding: deps.planBinding,
+        lowLatencyBinding: prepared.lowLatencyBinding,
+      });
+      signMs = nowMs() - signStart;
+      if (!deps.isAuthorityCurrent()) throw new Error("Vault authority changed before this row was sent. No transaction was sent.");
+      const fireStart = nowMs();
+      const results = await fireSignedMintsViaRelay({
+        relayUrl: deps.fastPath.relayUrl,
+        launchId: deps.fastPath.launchId,
+        chainId: deps.fastPath.chainId,
+        planBinding: deps.planBinding,
+        signedMints: [signed],
+      });
+      fireMs = nowMs() - fireStart;
+      outcome = classifyGuidedRelayFireResult(results[0]);
+    } catch (fastPathError) {
+      outcome = classifyGuidedRelayFireError(fastPathError);
+    }
+
+    const action = decideGuidedFastPathAction({ outcome, hasSignedBytes: signed !== null });
+    if (action === "fallback-direct") {
+      // Nothing was signed for this row yet — the standard direct path signs and sends once.
+      const directStart = nowMs();
+      const sent = await broadcastPreparedBrowserMint(transaction, {
+        explicitConsent: true,
+        consentBinding: deps.planBinding,
+        isAuthorityCurrent: deps.isAuthorityCurrent,
+      });
+      return { sent, timing: { route: "direct", sendMs: nowMs() - directStart } };
+    }
+    if (action === "confirm-fast" && signed) {
+      return {
+        sent: markSignedMintBroadcastViaFastPath(signed),
+        timing: { route: "fast", signMs, sendMs: fireMs ?? 0 },
+      };
+    }
+    // Signed bytes exist but acceptance is unproven: rebroadcast the exact same
+    // bytes (same hash) over direct RPC so the row always terminates.
+    const rebroadcastStart = nowMs();
+    const sent = await broadcastSignedMintViaRpc(signed!);
+    return { sent, timing: { route: "fast", signMs, sendMs: (fireMs ?? 0) + (nowMs() - rebroadcastStart) } };
   }
 
   async function pollMintReceipts() {
@@ -1014,8 +1149,9 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
           <div className={CARD}>
             <StepHeading number="08" title="Sign" body="Final review. Nothing moves until you approve." />
             <div className="mt-4 grid gap-3 sm:grid-cols-2"><Metric label="Maximum spend" value={`${formatEther(executionPlan?.maxTotalWei ?? BigInt(0))} ETH`} prominent /><Metric label="Recipient" value={holder ? maskVaultAddress(holder.address) : "missing"} /></div>
+            <FastPathReadiness status={relayHealth.status} updatedAt={relayHealth.updatedAt} />
             <ExecutionModeSurface simulationComplete={simulationComplete} humanFlow={humanFlow} />
-            <TransactionRows transactions={transactions} receipts={receipts} />
+            <TransactionRows transactions={transactions} receipts={receipts} timings={mintTimings} />
             <button type="button" onClick={openLiveConsent} disabled={!simulationComplete || Boolean(busy)} className="mt-4 w-full rounded-2xl bg-red-600 px-5 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40">Review and sign</button>
           </div>
         ) : null}
@@ -1023,7 +1159,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
         {step === "receipts" ? (
           <div className={CARD}>
             <StepHeading number="09" title="Receipt" body="See what completed." />
-            <TransactionRows transactions={transactions} receipts={receipts} />
+            <TransactionRows transactions={transactions} receipts={receipts} timings={mintTimings} />
             <button type="button" onClick={() => void pollMintReceipts()} disabled={receiptPolling || !receipts.some((receipt) => receipt.status === "Submitted" || receipt.status === "Confirming" || receipt.status === "Unknown")} className="mt-4 w-full rounded-2xl border border-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent)] disabled:opacity-40">{receiptPolling ? "Checking…" : "Check receipt"}</button>
             {confirmedReceipts.map((receipt) => <div key={receipt.transactionId} className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800"><p>Verified NFT recipient · {receipt.verifiedRecipient}</p><p className="mt-1 font-mono text-xs">Token {receipt.tokenIds?.join(", ")} · {receipt.confirmations} confirmation(s)</p></div>)}
             <button type="button" onClick={() => setStep("finish")} disabled={!broadcastComplete} className="mt-4 w-full rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:opacity-40">Review safe finish</button>
@@ -1075,13 +1211,36 @@ function Metric({ label, value, prominent = false }: { label: string; value: str
   return <div className={`rounded-2xl border p-4 ${prominent ? "border-2 border-[color:var(--compas-accent)] bg-[color:var(--compas-soft)]" : "border-[color:var(--compas-line)] bg-[color:var(--compas-soft)]"}`}><p className="text-[10px] font-black uppercase tracking-[0.16em] text-[color:var(--compas-muted)]">{label}</p><p className="mt-1 text-lg font-black">{value}</p></div>;
 }
 
-function TransactionRows({ transactions, receipts }: { transactions: BrowserPreparedMint[]; receipts: GuidedMintReceipt[] }) {
+function TransactionRows({ transactions, receipts, timings }: { transactions: BrowserPreparedMint[]; receipts: GuidedMintReceipt[]; timings?: Record<string, GuidedFastPathTiming> }) {
   return <div className="mt-4 grid gap-2">{transactions.map((transaction) => {
     const receipt = receipts.find((candidate) => candidate.transactionId === transaction.id && candidate.binding === transaction.binding);
     const humanStatus: HumanMintFlowStatus = receipt?.status === "Confirmed" ? "Confirmado" : receipt?.status === "Failed" || transaction.status === "failed" ? "No completado" : receipt || transaction.status === "broadcast" ? "Enviado" : transaction.status === "simulated" ? "Preparado" : "Preparado";
     const hash = receipt?.hash || transaction.hash;
-    return <article key={`${transaction.binding}:${transaction.id}`} className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-3 text-sm font-bold"><div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><p>{transaction.walletAlias} · {maskVaultAddress(transaction.walletAddress)} → {maskVaultAddress(transaction.recipientAddress)}</p><span className="text-xs font-black uppercase tracking-[0.12em]">{humanStatus}</span></div><p className="mt-1 font-mono text-xs text-[color:var(--compas-muted)]">{formatEther(transaction.request.value)} ETH mint value{transaction.simulationGas ? ` · ${transaction.simulationGas} gas estimate` : ""}</p>{receipt?.status === "Confirmed" && hash ? <a href={blockscoutTxUrl(hash)} target="_blank" rel="noreferrer" className="mt-2 block break-all rounded-xl border border-[color:var(--compas-accent)] px-3 py-2 text-xs font-black text-[color:var(--compas-accent)]">Receipt · Blockscout</a> : null}{receipt?.error || transaction.error ? <p className="mt-2 text-xs font-bold text-red-700">{humanizeMintError(receipt?.error ?? transaction.error).message}</p> : null}<details className="mt-2"><summary className="cursor-pointer text-xs font-black text-[color:var(--compas-muted)]">Avanzado</summary><p className="mt-1 break-all font-mono text-[10px] text-[color:var(--compas-muted)]">{hash ?? "No transaction hash yet"}</p></details></article>;
+    const timing = timings?.[timingKeyOf(transaction)];
+    const timingBadge = transaction.status === "broadcast" || receipt ? formatGuidedFastPathTiming(timing) : null;
+    const timingDetail = describeGuidedFastPathTiming(timing);
+    return <article key={`${transaction.binding}:${transaction.id}`} className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-3 text-sm font-bold"><div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><p>{transaction.walletAlias} · {maskVaultAddress(transaction.walletAddress)} → {maskVaultAddress(transaction.recipientAddress)}</p><span className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.12em]">{timingBadge ? <span className="rounded-full border border-[color:var(--compas-accent)] px-2 py-0.5 normal-case tracking-normal text-[color:var(--compas-accent)]">{timingBadge}</span> : null}{humanStatus}</span></div><p className="mt-1 font-mono text-xs text-[color:var(--compas-muted)]">{formatEther(transaction.request.value)} ETH mint value{transaction.simulationGas ? ` · ${transaction.simulationGas} gas estimate` : ""}</p>{receipt?.status === "Confirmed" && hash ? <a href={blockscoutTxUrl(hash)} target="_blank" rel="noreferrer" className="mt-2 block break-all rounded-xl border border-[color:var(--compas-accent)] px-3 py-2 text-xs font-black text-[color:var(--compas-accent)]">Receipt · Blockscout</a> : null}{receipt?.error || transaction.error ? <p className="mt-2 text-xs font-bold text-red-700">{humanizeMintError(receipt?.error ?? transaction.error).message}</p> : null}<details className="mt-2"><summary className="cursor-pointer text-xs font-black text-[color:var(--compas-muted)]">Avanzado</summary>{timingDetail ? <p className="mt-1 font-mono text-[10px] text-[color:var(--compas-muted)]">{timingDetail}</p> : null}<p className="mt-1 break-all font-mono text-[10px] text-[color:var(--compas-muted)]">{hash ?? "No transaction hash yet"}</p></details></article>;
   })}</div>;
+}
+
+function FastPathReadiness({ status, updatedAt }: { status: RelayHealthBadgeStatus; updatedAt: string | null }) {
+  const body = status === "active"
+    ? "Vía rápida activa. Tu mint saldrá por el camino más veloz."
+    : status === "degraded"
+      ? "Vía rápida degradada. Tu mint sigue saliendo, algo más lento."
+      : status === "loading"
+        ? "Comprobando la vía rápida…"
+        : "Vía rápida no disponible. Tu mint saldrá por el camino estándar.";
+  return (
+    <div className="mt-4 flex flex-col gap-2 rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-4 sm:flex-row sm:items-center sm:justify-between" aria-live="polite">
+      <div>
+        <p className="text-xs font-black uppercase tracking-[0.18em] text-[color:var(--compas-accent)]">Vía rápida</p>
+        <p className="mt-1 text-sm font-bold text-[color:var(--compas-muted)]">{body}</p>
+        {updatedAt ? <p className="mt-1 text-[10px] font-black uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">Última comprobación · {updatedAt}</p> : null}
+      </div>
+      <RelayHealthBadge />
+    </div>
+  );
 }
 
 function StatusLegend({ status }: { status: HumanMintFlowStatus }) {
@@ -1121,11 +1280,17 @@ function ExecutionModeSurface({ simulationComplete, humanFlow }: { simulationCom
 }
 
 function RelayHealthBadge() {
+  const { status, updatedAt } = useRelayHealth();
+  const positive = status === "active";
+  return <div className={`w-fit rounded-full border px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.14em] ${positive ? "border-[color:var(--compas-accent)] bg-[color:var(--compas-accent)] text-[color:var(--compas-accent-ink)]" : "border-[color:var(--compas-line)] bg-[color:var(--compas-card)] text-[color:var(--compas-muted)]"}`} title={updatedAt ? `Última comprobación: ${updatedAt}` : undefined}>{relayHealthLabel(status)}</div>;
+}
+
+function useRelayHealth(): { status: RelayHealthBadgeStatus; updatedAt: string | null } {
   const [status, setStatus] = useState<RelayHealthBadgeStatus>("loading");
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
 
   useEffect(() => {
-    const relayUrl = process.env.NEXT_PUBLIC_COMPAS_RELAY_URL?.trim();
+    const relayUrl = GUIDED_RELAY_URL;
     let cancelled = false;
     let timer: number | null = null;
 
@@ -1138,7 +1303,7 @@ function RelayHealthBadge() {
       const controller = new AbortController();
       const timeout = window.setTimeout(() => controller.abort(), 5_000);
       try {
-        const response = await fetch(`${relayUrl.replace(/\/+$/, "")}/health`, { cache: "no-store", signal: controller.signal });
+        const response = await fetch(`${relayUrl}/health`, { cache: "no-store", signal: controller.signal });
         const payload = response.ok ? await response.json().catch(() => null) : null;
         if (!cancelled) setStatus(relayHealthStatusFromPayload(payload));
       } catch {
@@ -1157,8 +1322,7 @@ function RelayHealthBadge() {
     };
   }, []);
 
-  const positive = status === "active";
-  return <div className={`w-fit rounded-full border px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.14em] ${positive ? "border-[color:var(--compas-accent)] bg-[color:var(--compas-accent)] text-[color:var(--compas-accent-ink)]" : "border-[color:var(--compas-line)] bg-[color:var(--compas-card)] text-[color:var(--compas-muted)]"}`} title={updatedAt ? `Última comprobación: ${updatedAt}` : undefined}>{relayHealthLabel(status)}</div>;
+  return { status, updatedAt };
 }
 
 function NumberInput({ label, value, onChange, min }: { label: string; value: number; onChange: (value: number) => void; min: number }) {

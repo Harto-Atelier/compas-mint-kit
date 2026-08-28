@@ -122,9 +122,11 @@ test("guided recovery is secret-free, persistent, zero-buffered by default, and 
   assert.match(source, /Maximum network gas · \{formatEther/);
 });
 
-test("guided fast path surface is feature-flagged, post-simulation, human-readable, and health-backed", () => {
+test("guided fast path surface is on by default, opt-out only, post-simulation, human-readable, and health-backed", () => {
   assert.match(source, /GUIDED_EXECUTION_MODE_SURFACE_ENABLED/);
-  assert.match(source, /NEXT_PUBLIC_GUIDED_EXECUTION_MODE_SURFACE/);
+  // Default ON: only an explicit "0"/"false" opt-out hides the surface.
+  assert.match(source, /NEXT_PUBLIC_GUIDED_EXECUTION_MODE_SURFACE !== "0" && process\.env\.NEXT_PUBLIC_GUIDED_EXECUTION_MODE_SURFACE !== "false"/);
+  assert.doesNotMatch(source, /NEXT_PUBLIC_GUIDED_EXECUTION_MODE_SURFACE === "1"/);
   assert.match(source, /<ExecutionModeSurface simulationComplete=\{simulationComplete\} humanFlow=\{humanFlow\} \/>/);
   assert.match(source, /if \(!GUIDED_EXECUTION_MODE_SURFACE_ENABLED \|\| !simulationComplete\) return null/);
   assert.match(source, /Vía rápida/);
@@ -140,4 +142,36 @@ test("guided fast path surface is feature-flagged, post-simulation, human-readab
   assert.match(source, /Avanzado/);
   assert.doesNotMatch(source, /mocked placeholder state/);
   assert.doesNotMatch(source, /uploadLowLatency|sendLowLatency|startArmedLaunch|relay\.send|relay\.upload/);
+});
+
+test("guided live mint defaults to the low-latency fast path with a safe direct RPC fallback per row", () => {
+  assert.match(source, /prepareLowLatencyBrowserMint/);
+  assert.match(source, /signPreparedBrowserMint/);
+  assert.match(source, /fireSignedMintsViaRelay/);
+  assert.match(source, /shouldUseGuidedFastPath/);
+  assert.match(source, /decideGuidedFastPathAction/);
+  assert.match(source, /classifyGuidedRelayFireResult/);
+  assert.match(source, /broadcastSignedMintViaRpc/);
+  assert.match(source, /markSignedMintBroadcastViaFastPath/);
+  // The existing direct RPC broadcast stays wired as the fallback path.
+  assert.match(source, /broadcastPreparedBrowserMint/);
+  // Fast path only starts after the same explicit live consent binding.
+  assert.match(source, /consentBinding: deps\.planBinding/);
+  assert.match(source, /planBinding: executionPlan\.binding/);
+  // Row execution stays authority-guarded across every fast-path await.
+  assert.match(source, /isAuthorityCurrent: \(\) => vaultGeneration\.current\.isCurrent\(broadcastGeneration\)/);
+  assert.match(source, /if \(!deps\.isAuthorityCurrent\(\)\)/);
+});
+
+test("sign step shows a jargon-free Vía rápida readiness indicator before signing and ⚡ timing after send", () => {
+  assert.match(source, /<FastPathReadiness status=\{relayHealth\.status\} updatedAt=\{relayHealth\.updatedAt\} \/>/);
+  assert.match(source, /Vía rápida activa\. Tu mint saldrá por el camino más veloz\./);
+  assert.match(source, /Vía rápida degradada\. Tu mint sigue saliendo, algo más lento\./);
+  assert.match(source, /Vía rápida no disponible\. Tu mint saldrá por el camino estándar\./);
+  assert.match(source, /formatGuidedFastPathTiming/);
+  assert.match(source, /describeGuidedFastPathTiming/);
+  assert.match(source, /timings=\{mintTimings\}/);
+  // Readiness copy stays jargon-free: "Vía rápida", never relay/nonce/HMAC wording.
+  const readiness = source.slice(source.indexOf("function FastPathReadiness"), source.indexOf("function StatusLegend"));
+  assert.doesNotMatch(readiness, /relay(?!Health)|nonce|hmac|rpc|broadcast/i);
 });
