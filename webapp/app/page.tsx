@@ -261,16 +261,10 @@ function CompasTotemStrip() {
             <p className="mt-3 max-w-md text-sm font-semibold leading-6 text-white/60">The holder wallet stays the destination. Temporary wallets only do the mint work.</p>
           </div>
           <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
-            {Array.from({ length: 10 }).map((_, index) => (
-              <div key={index} className="group relative aspect-square overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-white to-violet-100 p-3 shadow-inner shadow-white/20">
-                <div className="relative h-full w-full rounded-xl bg-[#5964bf] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.35)]">
-                  <span className="absolute left-1/2 top-[18%] h-[68%] w-[12%] -translate-x-1/2 rounded-sm bg-white" />
-                  <span className="absolute left-[18%] top-[34%] h-[16%] w-[70%] -rotate-3 bg-black" />
-                  <span className="absolute left-[22%] top-[41%] h-[15%] w-[64%] -rotate-3 bg-red-500" />
-                  <span className="absolute left-[14%] top-[55%] h-[16%] w-[74%] -rotate-3 bg-black" />
-                </div>
-                <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#635bff]/10 via-transparent to-white/20" />
-                <span className="absolute bottom-2 right-2 rounded-full bg-neutral-950/80 px-2 py-0.5 font-mono text-[10px] font-black text-white">#{String(index + 1).padStart(2, "0")}</span>
+            {[1516, 1, 2, 7, 33, 77, 111, 420, 999, 4663].map((tokenId) => (
+              <div key={tokenId} className="group relative aspect-square overflow-hidden rounded-2xl border border-white/10 bg-white/5 shadow-inner shadow-white/10">
+                <Image src={`/compas/compas-${tokenId}.svg`} alt={`Compas #${tokenId}`} width={160} height={160} unoptimized className="h-full w-full rounded-2xl object-cover [image-rendering:pixelated] transition duration-500 group-hover:scale-110" />
+                <span className="absolute bottom-2 right-2 rounded-full bg-neutral-950/80 px-2 py-0.5 font-mono text-[10px] font-black text-white">#{tokenId}</span>
               </div>
             ))}
           </div>

@@ -18,6 +18,8 @@ test("landing adds a lower Compas collection layer without replacing the product
   assert.match(source, /function CompasTotemStrip/);
   assert.match(source, /Compas collection layer/);
   assert.match(source, /Built around your Compas\./);
+  assert.match(source, /\/compas\/compas-\$\{tokenId\}\.svg/);
+  assert.match(source, /1516/);
   assert.match(source, /<ProductPreview \/>/);
   assert.match(source, /<CompasTotemStrip \/>/);
   assert.ok(source.indexOf("<ProductPreview />") < source.indexOf("<CompasTotemStrip />"));
