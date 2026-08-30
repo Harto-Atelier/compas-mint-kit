@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 
 import { COMPAS_CONTRACT, isEthAddress, writeGateSession } from "@/lib/compas-gate";
 
@@ -168,6 +169,37 @@ function Art({ kind }: { kind: string }) {
   return <div className="mx-auto w-36 rotate-[-3deg] rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm"><div className="grid gap-2 text-sm font-black text-neutral-700"><span>🌿 Mints</span><span>▣ Wallets</span><span>⇄ Disperse</span><span>◇ Reports</span></div></div>;
 }
 
+function Compas3DHero() {
+  return (
+    <div className="relative mx-auto mt-8 grid min-h-[420px] w-full max-w-lg place-items-center lg:mt-0" aria-label="Compas 3D artwork">
+      <div className="absolute inset-0 rounded-full bg-[#635bff]/15 blur-3xl" />
+      <div className="absolute bottom-8 h-20 w-72 rounded-full bg-neutral-950/20 blur-2xl" />
+      <div className="relative h-80 w-80 [perspective:1000px] sm:h-96 sm:w-96">
+        <div className="absolute inset-0 rounded-[3rem] border border-white/70 bg-white/55 shadow-2xl shadow-[#635bff]/20 backdrop-blur-xl [transform:rotateX(62deg)_rotateZ(-18deg)]" />
+        <div className="absolute inset-7 rounded-[2.5rem] border border-violet-100 bg-gradient-to-br from-white via-violet-50 to-neutral-100 shadow-2xl [transform:rotateX(58deg)_rotateZ(-18deg)_translateZ(38px)]" />
+        <div className="absolute inset-14 grid place-items-center rounded-[2rem] border border-neutral-200 bg-neutral-950 shadow-2xl shadow-neutral-950/30 [transform:rotateX(54deg)_rotateZ(-18deg)_translateZ(82px)]">
+          <Image src="/compas-logo.png" alt="Compas" width={512} height={512} priority className="h-40 w-40 rounded-3xl object-cover shadow-[0_0_45px_rgba(99,91,255,0.45)] sm:h-48 sm:w-48" />
+        </div>
+        {Array.from({ length: 14 }).map((_, index) => {
+          const angle = (index / 14) * Math.PI * 2;
+          const x = Math.cos(angle) * 145;
+          const y = Math.sin(angle) * 88;
+          return (
+            <span
+              key={index}
+              className="compas-orbit-dot absolute left-1/2 top-1/2 h-3 w-3 rounded-full border border-white bg-[#635bff] shadow-lg shadow-[#635bff]/40"
+              style={{ "--x": `${x}px`, "--y": `${y}px`, "--z": `${20 + (index % 4) * 12}px`, "--delay": `${index * 0.08}s`, opacity: 0.35 + (index % 5) * 0.1 } as CSSProperties}
+            />
+          );
+        })}
+      </div>
+      <div className="relative -mt-8 rounded-full border border-neutral-200 bg-white/85 px-4 py-2 text-xs font-black uppercase tracking-[0.16em] text-neutral-700 shadow-sm backdrop-blur">
+        Compas holder tools · local keys · fast mint
+      </div>
+    </div>
+  );
+}
+
 function ProductPreview() {
   return (
     <div className="relative mx-auto mt-8 w-full max-w-5xl lg:mt-0">
@@ -218,6 +250,36 @@ function ProductPreview() {
   );
 }
 
+function CompasTotemStrip() {
+  return (
+    <section className="mx-auto w-full max-w-[100vw] px-4 pb-12 sm:px-5 lg:max-w-6xl" aria-label="Compas collection layer">
+      <div className="overflow-hidden rounded-[2rem] border border-neutral-200 bg-neutral-950 p-4 text-white shadow-2xl shadow-neutral-950/15 sm:p-6">
+        <div className="grid gap-6 lg:grid-cols-[0.85fr_1.15fr] lg:items-center">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-violet-300">Compas layer</p>
+            <h2 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">Built around your Compas.</h2>
+            <p className="mt-3 max-w-md text-sm font-semibold leading-6 text-white/60">The holder wallet stays the destination. Temporary wallets only do the mint work.</p>
+          </div>
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+            {Array.from({ length: 10 }).map((_, index) => (
+              <div key={index} className="group relative aspect-square overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-white to-violet-100 p-3 shadow-inner shadow-white/20">
+                <div className="relative h-full w-full rounded-xl bg-[#5964bf] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.35)]">
+                  <span className="absolute left-1/2 top-[18%] h-[68%] w-[12%] -translate-x-1/2 rounded-sm bg-white" />
+                  <span className="absolute left-[18%] top-[34%] h-[16%] w-[70%] -rotate-3 bg-black" />
+                  <span className="absolute left-[22%] top-[41%] h-[15%] w-[64%] -rotate-3 bg-red-500" />
+                  <span className="absolute left-[14%] top-[55%] h-[16%] w-[74%] -rotate-3 bg-black" />
+                </div>
+                <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#635bff]/10 via-transparent to-white/20" />
+                <span className="absolute bottom-2 right-2 rounded-full bg-neutral-950/80 px-2 py-0.5 font-mono text-[10px] font-black text-white">#{String(index + 1).padStart(2, "0")}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function LandingPage() {
   const [loginOpen, setLoginOpen] = useState(false);
 
@@ -237,15 +299,15 @@ export default function LandingPage() {
 
       <section className="mx-auto grid w-full max-w-[100vw] gap-8 px-4 pb-8 sm:px-5 lg:max-w-6xl lg:grid-cols-[0.78fr_1fr] lg:items-center lg:pb-14">
         <div className="text-center lg:text-left">
-          <p className="inline-flex rounded-full border border-violet-100 bg-white px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#635bff] shadow-sm sm:text-xs sm:tracking-[0.16em]">NFT mint command center</p>
-          <h1 className="mt-5 max-w-full text-balance break-words text-[2.35rem] font-black leading-[0.9] tracking-[-0.075em] text-neutral-950 [overflow-wrap:anywhere] min-[390px]:text-5xl sm:text-6xl lg:text-7xl">Mint faster without giving up control.</h1>
-          <p className="mt-4 max-w-md text-pretty text-sm font-medium leading-6 text-neutral-600 sm:text-base sm:leading-7 lg:mx-0">Compas Mint Kit turns the morsyxbt mint flow into a polished operator console: encrypted launch vaults, wallet staging, simulation-first execution, and real reports.</p>
+          <p className="inline-flex rounded-full border border-violet-100 bg-white px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#635bff] shadow-sm sm:text-xs sm:tracking-[0.16em]">Compas holder mint tools</p>
+          <h1 className="mt-5 max-w-full text-balance break-words text-[2.35rem] font-black leading-[0.9] tracking-[-0.075em] text-neutral-950 [overflow-wrap:anywhere] min-[390px]:text-5xl sm:text-6xl lg:text-7xl">Mint with your Compas in control.</h1>
+          <p className="mt-4 max-w-md text-pretty text-sm font-medium leading-6 text-neutral-600 sm:text-base sm:leading-7 lg:mx-0">A calm mint console for Compas holders: encrypted temporary wallets, recovery files, fast signing, and receipts.</p>
           <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:max-w-md">
             <button type="button" onClick={() => setLoginOpen(true)} className="min-h-11 rounded-full bg-[#635bff] px-6 py-3 text-sm font-black text-white shadow-lg shadow-[#635bff]/20 hover:bg-[#5148ee]">Login / Launch App</button>
             <a href="https://github.com/Harto-Atelier/compas-mint-kit#readme" target="_blank" rel="noreferrer" className="min-h-11 rounded-full border border-neutral-200 bg-white px-6 py-3 text-center text-sm font-black text-neutral-700 shadow-sm hover:border-neutral-300">Docs</a>
           </div>
         </div>
-        <ProductPreview />
+        <Compas3DHero />
       </section>
 
       <div className="mx-auto grid w-full max-w-[100vw] grid-cols-1 gap-2 px-4 pb-4 text-center text-xs font-black min-[390px]:grid-cols-3 sm:px-5 lg:max-w-4xl">
@@ -263,6 +325,10 @@ export default function LandingPage() {
           </article>
         ))}
       </section>
+
+      <ProductPreview />
+
+      <CompasTotemStrip />
 
       <section id="access" className="mx-auto w-full max-w-[100vw] px-4 pb-6 sm:px-5 lg:max-w-6xl">
         <div className="grid overflow-hidden rounded-[2rem] border border-neutral-200 bg-white shadow-sm lg:grid-cols-[0.8fr_1.2fr]">
@@ -307,6 +373,16 @@ export default function LandingPage() {
       </footer>
 
       {loginOpen ? <LoginModal onClose={() => setLoginOpen(false)} /> : null}
+      <style jsx global>{`
+        .compas-orbit-dot {
+          animation: compasFloat 3.8s ease-in-out var(--delay) infinite alternate;
+          transform: translate3d(var(--x), var(--y), var(--z)) scale(0.92);
+        }
+        @keyframes compasFloat {
+          from { transform: translate3d(var(--x), var(--y), var(--z)) scale(0.92); }
+          to { transform: translate3d(var(--x), calc(var(--y) - 10px), calc(var(--z) + 26px)) scale(1.08); }
+        }
+      `}</style>
     </main>
   );
 }
