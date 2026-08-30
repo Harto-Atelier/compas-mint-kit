@@ -100,7 +100,7 @@ export default function RecoverFundsPanel({ holderAddress, vaultWallets, journal
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-xs font-black uppercase tracking-[0.18em] text-[color:var(--compas-accent)]">Recover funds</p>
-          <p className="mt-1 text-sm font-bold text-[color:var(--compas-muted)]">Scan known burners for leftover balances and sweep them back to your verified wallet. Read-only checks; you sign every sweep.</p>
+          <p className="mt-1 text-sm font-bold text-[color:var(--compas-muted)]">Find leftover ETH in temporary wallets. Sweep back to your holder only when you sign.</p>
         </div>
         <button type="button" onClick={() => setOpen((current) => !current)} className="shrink-0 rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)]">
           {open ? "Hide recovery" : "Recover funds"}
@@ -108,12 +108,19 @@ export default function RecoverFundsPanel({ holderAddress, vaultWallets, journal
       </div>
       {open ? (
         <div className="mt-4 grid gap-3">
+          {knownBurners.length === 0 ? (
+            <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-amber-900">
+              <p className="text-sm font-black">No temporary wallets loaded yet.</p>
+              <p className="mt-1 text-xs font-bold">Open the Vault, load or restore your recovery file, then scan balances here.</p>
+              <button type="button" onClick={onOpenVault} className="mt-3 w-full rounded-xl bg-amber-800 px-4 py-2 text-xs font-black text-white sm:w-auto">Open Vault</button>
+            </div>
+          ) : null}
           <div className="grid gap-2 sm:grid-cols-[150px_1fr_auto]">
             <select value={chainKey} onChange={(event) => setChainKey(event.target.value === "ethereum" ? "ethereum" : "base")} className="h-11 rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-card)] px-3 text-sm font-bold" aria-label="Recovery chain">
               <option value="base">Base</option>
               <option value="ethereum">Ethereum</option>
             </select>
-            <p className="self-center text-xs font-bold text-[color:var(--compas-muted)]">{knownBurners.length} known burner(s) from the unlocked Vault and the recovery journal. Locked Vault wallets appear after unlock in step 02.</p>
+            <p className="self-center text-xs font-bold text-[color:var(--compas-muted)]">{knownBurners.length} temporary wallet(s). Unlock the Vault to include more.</p>
             <button type="button" onClick={() => void runScan()} disabled={busy || knownBurners.length === 0} className="rounded-2xl border border-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent)] disabled:cursor-not-allowed disabled:opacity-40">
               {busy ? "Scanning…" : "Scan residual balances"}
             </button>

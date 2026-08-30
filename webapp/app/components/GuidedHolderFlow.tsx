@@ -1175,6 +1175,19 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
     BigInt(0),
   ) ?? BigInt(0);
   const resumeDetails = sessionResume && !resumeDismissed ? describeGuidedSessionResume(sessionResume) : null;
+  const nextAction = resolveNextActionLabel({
+    holderReady: Boolean(holder),
+    step,
+    burnersLoaded: burners.length > 0,
+    burnersSelected: selectedBurnerAddresses.length > 0,
+    recoverySaved,
+    setupComplete,
+    mintSelected: Boolean(discovery),
+    fundingComplete,
+    simulationComplete,
+    broadcastComplete,
+    finished,
+  });
 
   return (
     <section className={`${embedded ? "" : "min-h-screen bg-[var(--compas-bg-art)] p-4 sm:p-6"} text-[color:var(--compas-ink)]`}>
@@ -1198,6 +1211,8 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
           <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[color:var(--compas-accent)]">Current step · {String(currentStepIndex + 1).padStart(2, "0")} of {GUIDED_HOLDER_STEPS.length}</p>
           <p className="mt-1 text-xl font-black">{currentStep.label}</p>
         </div>
+
+        <NextActionCard label={nextAction} recoverySaved={recoverySaved} hasKnownBurners={burners.length > 0 || Boolean(recoveryJournal?.burnerAddresses.length)} onOpenVault={() => openAdvanced("Vault")} />
 
         <details className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-3 text-xs">
           <summary className="cursor-pointer font-black text-[color:var(--compas-muted)]">All steps</summary>
@@ -1241,14 +1256,12 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
           </div>
         ) : null}
 
-        {recoveryJournal ? (
-          <RecoverFundsPanel
-            holderAddress={holder?.address ?? null}
-            vaultWallets={burners}
-            journal={recoveryJournal}
-            onOpenVault={() => openAdvanced("Vault")}
-          />
-        ) : null}
+        <RecoverFundsPanel
+          holderAddress={holder?.address ?? null}
+          vaultWallets={burners}
+          journal={recoveryJournal}
+          onOpenVault={() => openAdvanced("Vault")}
+        />
 
         {recoveryJournal ? (
           <details className="rounded-2xl border-2 border-amber-300 bg-amber-50 p-4 text-amber-950">
@@ -1480,6 +1493,44 @@ function StepHeading({ number, title, body }: { number: string; title: string; b
   return <div><p className="text-xs font-black uppercase tracking-[0.22em] text-[color:var(--compas-accent)]">{number}</p><h2 className="mt-1 text-2xl font-black">{title}</h2><p className="mt-2 text-sm font-semibold text-[color:var(--compas-muted)]">{body}</p></div>;
 }
 
+function NextActionCard({ label, recoverySaved, hasKnownBurners, onOpenVault }: { label: string; recoverySaved: boolean; hasKnownBurners: boolean; onOpenVault: () => void }) {
+  return (
+    <section className="rounded-[1.75rem] border border-[color:var(--compas-line)] bg-[color:var(--compas-card)] p-4 sm:p-5" aria-live="polite">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-[color:var(--compas-accent)]">Next</p>
+          <p className="mt-1 text-2xl font-black">{label}</p>
+        </div>
+        <div className="flex flex-wrap gap-2 text-[11px] font-black uppercase tracking-[0.12em]">
+          <span className={`rounded-full border px-3 py-1.5 ${recoverySaved ? "border-emerald-300 bg-emerald-50 text-emerald-800" : "border-amber-300 bg-amber-50 text-amber-800"}`}>{recoverySaved ? "Backup saved" : "Backup needed"}</span>
+          <span className="rounded-full border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] px-3 py-1.5 text-[color:var(--compas-muted)]">You sign</span>
+          <span className="rounded-full border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] px-3 py-1.5 text-[color:var(--compas-muted)]">NFTs to holder</span>
+        </div>
+      </div>
+      {!recoverySaved || hasKnownBurners ? (
+        <button type="button" onClick={onOpenVault} className="mt-3 w-full rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] px-4 py-3 text-sm font-black sm:w-auto">
+          {recoverySaved ? "Open Vault" : "Save recovery file"}
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
+function resolveNextActionLabel(input: { holderReady: boolean; step: GuidedHolderStepId; burnersLoaded: boolean; burnersSelected: boolean; recoverySaved: boolean; setupComplete: boolean; mintSelected: boolean; fundingComplete: boolean; simulationComplete: boolean; broadcastComplete: boolean; finished: boolean }): string {
+  if (input.finished) return "Done — receipts and balances checked";
+  if (!input.holderReady) return "Connect Compas wallet";
+  if (!input.burnersLoaded) return "Load temporary wallets";
+  if (!input.recoverySaved) return "Save recovery file";
+  if (!input.burnersSelected) return "Choose wallets";
+  if (!input.setupComplete) return "Set quantity and max spend";
+  if (!input.mintSelected) return "Select mint";
+  if (input.step === "funding-review") return "Confirm plan";
+  if (!input.fundingComplete) return "Fund wallets";
+  if (!input.simulationComplete) return "Check mint";
+  if (!input.broadcastComplete) return "Review and sign";
+  return "Check receipts and finish";
+}
+
 function Metric({ label, value, prominent = false }: { label: string; value: string | number; prominent?: boolean }) {
   return <div className={`rounded-2xl border p-4 ${prominent ? "border-2 border-[color:var(--compas-accent)] bg-[color:var(--compas-soft)]" : "border-[color:var(--compas-line)] bg-[color:var(--compas-soft)]"}`}><p className="text-[10px] font-black uppercase tracking-[0.16em] text-[color:var(--compas-muted)]">{label}</p><p className="mt-1 text-lg font-black">{value}</p></div>;
 }
@@ -1514,10 +1565,6 @@ function FastPathReadiness({ status, updatedAt }: { status: RelayHealthBadgeStat
       <RelayHealthBadge />
     </div>
   );
-}
-
-function StatusLegend({ status }: { status: HumanMintFlowStatus }) {
-  return <span className="rounded-full border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] px-3 py-1.5">{status}</span>;
 }
 
 function ExecutionModeSurface({ simulationComplete, humanFlow }: { simulationComplete: boolean; humanFlow: { status: HumanMintFlowStatus; updatedAt: string } | null }) {

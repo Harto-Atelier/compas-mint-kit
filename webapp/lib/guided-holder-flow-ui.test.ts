@@ -74,8 +74,13 @@ test("console opens on the minimal Guide and delegates dense operator tools to c
   assert.doesNotMatch(shellSource, /Harto operator shell/);
 });
 
-test("mobile guide makes the current step prominent while optional details stay secondary", () => {
+test("mobile guide makes the current step and next action prominent while optional details stay secondary", () => {
   assert.match(source, /Current step/);
+  assert.match(source, /NextActionCard/);
+  assert.match(source, /resolveNextActionLabel/);
+  assert.match(source, /Save recovery file/);
+  assert.match(source, /Backup needed/);
+  assert.match(source, /NFTs to holder/);
   assert.match(source, /overflow-x-auto/);
   assert.match(source, /<details/);
   assert.match(source, /Holder guide/);
@@ -172,6 +177,6 @@ test("sign step shows a jargon-free Vía rápida readiness indicator before sign
   assert.match(source, /describeGuidedFastPathTiming/);
   assert.match(source, /timings=\{mintTimings\}/);
   // Readiness copy stays jargon-free: "Vía rápida", never relay/nonce/HMAC wording.
-  const readiness = source.slice(source.indexOf("function FastPathReadiness"), source.indexOf("function StatusLegend"));
+  const readiness = source.slice(source.indexOf("function FastPathReadiness"), source.indexOf("function ExecutionModeSurface"));
   assert.doesNotMatch(readiness, /relay(?!Health)|nonce|hmac|rpc|broadcast/i);
 });

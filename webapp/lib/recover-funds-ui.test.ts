@@ -26,6 +26,8 @@ test("a visible Recover funds entry is mounted on the guide surface, not hidden 
   // Mounted in the always-rendered guide body, before the step conditionals.
   assert.ok(flowSource.indexOf("<RecoverFundsPanel") < flowSource.indexOf('step === "holder"'));
   assert.match(panelSource, />\s*\{open \? "Hide recovery" : "Recover funds"\}/);
+  assert.match(panelSource, /No temporary wallets loaded yet/);
+  assert.match(panelSource, /Open the Vault, load or restore your recovery file/);
 });
 
 test("Recover funds panel scans known burners read-only and guides a holder-signed manual sweep", () => {
