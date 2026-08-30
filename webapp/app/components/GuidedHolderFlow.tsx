@@ -1241,12 +1241,14 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
           </div>
         ) : null}
 
-        <RecoverFundsPanel
-          holderAddress={holder?.address ?? null}
-          vaultWallets={burners}
-          journal={recoveryJournal}
-          onOpenVault={() => openAdvanced("Vault")}
-        />
+        {recoveryJournal ? (
+          <RecoverFundsPanel
+            holderAddress={holder?.address ?? null}
+            vaultWallets={burners}
+            journal={recoveryJournal}
+            onOpenVault={() => openAdvanced("Vault")}
+          />
+        ) : null}
 
         {recoveryJournal ? (
           <details className="rounded-2xl border-2 border-amber-300 bg-amber-50 p-4 text-amber-950">
