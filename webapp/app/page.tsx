@@ -49,8 +49,11 @@ const faqs = [
   { q: "Who can enter?", a: "Wallets holding at least one Compas. Login requires a wallet signature plus an onchain holder check." },
   { q: "Does the server store keys?", a: "No. Launch vault encryption and unlock happen in the browser. Use burner wallets and rotate keys per launch." },
   { q: "Can it mint from the browser?", a: "Yes, only after vault unlock, transaction preparation, simulation, spend caps, and an explicit broadcast confirmation." },
-  { q: "What chains are supported?", a: "Ethereum and Base planning are wired. Robinhood Chain stays blocked unless an operator supplies the real RPC and SeaDrop address." },
+  { q: "What chains are supported?", a: "Ethereum, Base, and Robinhood Chain. Robinhood is wired against the public sequencer RPC with a low-latency signing path; every chain still gets the same simulate-first, chain-id-checked flow." },
   { q: "Is this custody?", a: "No custody. The app never asks for seed phrases and never sends plaintext keys to a server. Keys stay local while unlocked." },
+  { q: "What if I close my browser mid-mint?", a: "Your progress is saved without secrets. Come back, resume from the same step, and funding checks re-verify onchain automatically." },
+  { q: "What about leftover ETH in temporary wallets?", a: "The Recover funds panel scans every known temporary wallet, shows residual balances, and guides a sweep back to your holder — you sign every transaction. Finish is blocked while funds remain." },
+  { q: "What if I lose this device?", a: "Download your encrypted .compas-vault recovery file and keep it outside the browser. Restore it anywhere with your passphrase; without it there is no recovery." },
   { q: "What should I use it for now?", a: "Prepare a drop, stage wallets, seal launch burners, simulate execution, and review reports. Real mainnet canary still needs explicit approval." },
 ];
 
@@ -261,8 +264,8 @@ function CompasTotemStrip() {
             <p className="mt-3 max-w-md text-sm font-semibold leading-6 text-white/60">The holder wallet stays the destination. Temporary wallets only do the mint work.</p>
           </div>
           <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
-            {[1516, 1, 2, 7, 33, 77, 111, 420, 999, 4663].map((tokenId) => (
-              <div key={tokenId} className="group relative aspect-square overflow-hidden rounded-2xl border border-white/10 bg-white/5 shadow-inner shadow-white/10">
+            {[1516, 1, 2, 7, 33, 77, 111, 420, 999, 4663].map((tokenId, index) => (
+              <div key={tokenId} style={{ "--stagger": index } as CSSProperties} className="compas-tile group relative aspect-square overflow-hidden rounded-2xl border border-white/10 bg-white/5 shadow-inner shadow-white/10">
                 <Image src={`/compas/compas-${tokenId}.svg`} alt={`Compas #${tokenId}`} width={160} height={160} unoptimized className="h-full w-full rounded-2xl object-cover [image-rendering:pixelated] transition duration-500 group-hover:scale-110" />
                 <span className="absolute bottom-2 right-2 rounded-full bg-neutral-950/80 px-2 py-0.5 font-mono text-[10px] font-black text-white">#{tokenId}</span>
               </div>
@@ -293,7 +296,7 @@ export default function LandingPage() {
 
       <section className="mx-auto grid w-full max-w-[100vw] gap-8 px-4 pb-8 sm:px-5 lg:max-w-6xl lg:grid-cols-[0.78fr_1fr] lg:items-center lg:pb-14">
         <div className="text-center lg:text-left">
-          <p className="inline-flex rounded-full border border-violet-100 bg-white px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#635bff] shadow-sm sm:text-xs sm:tracking-[0.16em]">Compas holder mint tools</p>
+          <p className="inline-flex rounded-full border border-violet-100 bg-white px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] shadow-sm sm:text-xs sm:tracking-[0.16em]"><span className="hero-badge-shimmer">Compas holder mint tools</span></p>
           <h1 className="mt-5 max-w-full text-balance break-words text-[2.35rem] font-black leading-[0.9] tracking-[-0.075em] text-neutral-950 [overflow-wrap:anywhere] min-[390px]:text-5xl sm:text-6xl lg:text-7xl">Mint with your Compas in control.</h1>
           <p className="mt-4 max-w-md text-pretty text-sm font-medium leading-6 text-neutral-600 sm:text-base sm:leading-7 lg:mx-0">A calm mint console for Compas holders: encrypted temporary wallets, recovery files, fast signing, and receipts.</p>
           <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:max-w-md">
@@ -312,7 +315,7 @@ export default function LandingPage() {
 
       <section className="mx-auto grid w-full max-w-[100vw] grid-cols-1 gap-4 px-4 pb-12 sm:grid-cols-2 sm:px-5 lg:max-w-6xl lg:grid-cols-3">
         {featureCards.map((card) => (
-          <article key={card.title} className="min-h-56 overflow-hidden rounded-[0.35rem] border border-neutral-200 bg-white p-4 shadow-[0_1px_8px_rgba(0,0,0,0.06)]">
+          <article key={card.title} className="scroll-reveal min-h-56 overflow-hidden rounded-[0.35rem] border border-neutral-200 bg-white p-4 shadow-[0_1px_8px_rgba(0,0,0,0.06)]">
             <div className="h-32"><Art kind={card.art} /></div>
             <h2 className="text-xl font-black tracking-tight text-neutral-800">{card.title}</h2>
             <p className="mt-2 text-sm font-medium leading-5 text-neutral-600">{card.body}</p>
@@ -322,9 +325,12 @@ export default function LandingPage() {
 
       <ProductPreview />
 
-      <CompasTotemStrip />
+      <div className="scroll-reveal-scale">
+        <CompasTotemStrip />
+      </div>
 
-      <section id="access" className="mx-auto w-full max-w-[100vw] px-4 pb-6 sm:px-5 lg:max-w-6xl">
+      <div className="scroll-reveal">
+        <section id="access" className="mx-auto w-full max-w-[100vw] px-4 pb-6 sm:px-5 lg:max-w-6xl">
         <div className="grid overflow-hidden rounded-[2rem] border border-neutral-200 bg-white shadow-sm lg:grid-cols-[0.8fr_1.2fr]">
           <div className="border-b border-neutral-200 p-6 lg:border-b-0 lg:border-r">
             <p className="text-xs font-black uppercase tracking-[0.18em] text-[#635bff]">Access model</p>
@@ -344,7 +350,8 @@ export default function LandingPage() {
             ))}
           </div>
         </div>
-      </section>
+        </section>
+      </div>
 
       <section id="faq" className="mx-auto w-full max-w-[100vw] px-4 pb-12 sm:px-5 lg:max-w-6xl">
         <div className="mb-5 flex flex-col gap-2 text-center lg:text-left">
@@ -353,7 +360,7 @@ export default function LandingPage() {
         </div>
         <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {faqs.map((item) => (
-            <div key={item.q} className="rounded-[1.5rem] border border-neutral-200 bg-white p-5 shadow-sm">
+            <div key={item.q} className="scroll-reveal rounded-[1.5rem] border border-neutral-200 bg-white p-5 shadow-sm">
               <dt className="text-base font-black text-neutral-950">{item.q}</dt>
               <dd className="mt-2 text-sm font-medium leading-6 text-neutral-600">{item.a}</dd>
             </div>
@@ -375,6 +382,55 @@ export default function LandingPage() {
         @keyframes compasFloat {
           from { transform: translate3d(var(--x), var(--y), var(--z)) scale(0.92); }
           to { transform: translate3d(var(--x), calc(var(--y) - 10px), calc(var(--z) + 26px)) scale(1.08); }
+        }
+        /* 2026 scroll-driven reveals — pure CSS, no JS, no layout shift */
+        @supports (animation-timeline: view()) {
+          .scroll-reveal {
+            animation: revealUp linear both;
+            animation-timeline: view();
+            animation-range: entry 0% entry 42%;
+          }
+          .scroll-reveal-scale {
+            animation: revealScale linear both;
+            animation-timeline: view();
+            animation-range: entry 0% entry 55%;
+          }
+          .compas-tile {
+            animation: tilePop linear both;
+            animation-timeline: view();
+            animation-range: entry 0% entry 60%;
+            animation-delay: calc(var(--stagger, 0) * 30ms);
+          }
+        }
+        @keyframes revealUp {
+          from { opacity: 0; transform: translateY(26px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes revealScale {
+          from { opacity: 0; transform: scale(0.96) translateY(18px); }
+          to { opacity: 1; transform: scale(1) translateY(0); }
+        }
+        @keyframes tilePop {
+          from { opacity: 0; transform: scale(0.7) rotate(-4deg); }
+          to { opacity: 1; transform: scale(1) rotate(0deg); }
+        }
+        .hero-badge-shimmer {
+          background: linear-gradient(110deg, #635bff 20%, #b7b2ff 40%, #635bff 60%);
+          background-size: 200% 100%;
+          -webkit-background-clip: text;
+          background-clip: text;
+          color: transparent;
+          animation: shimmerSlide 3.2s linear infinite;
+        }
+        @keyframes shimmerSlide {
+          to { background-position: -200% 0; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .compas-orbit-dot, .scroll-reveal, .scroll-reveal-scale, .compas-tile, .hero-badge-shimmer {
+            animation: none !important;
+            opacity: 1 !important;
+            transform: none !important;
+          }
         }
       `}</style>
     </main>
