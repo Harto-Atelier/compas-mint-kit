@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 
 import { COMPAS_CONTRACT, isEthAddress, writeGateSession } from "@/lib/compas-gate";
 
@@ -280,6 +280,30 @@ function CompasTotemStrip() {
 export default function LandingPage() {
   const [loginOpen, setLoginOpen] = useState(false);
 
+  useEffect(() => {
+    // Fallback for browsers without CSS scroll-driven animations (Safari, Firefox):
+    // IntersectionObserver toggles .in-view to run the same reveal keyframes.
+    if (typeof CSS !== "undefined" && CSS.supports("animation-timeline: view()")) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const targets = document.querySelectorAll(".scroll-reveal, .scroll-reveal-scale, .compas-tile");
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("in-view");
+            observer.unobserve(entry.target);
+          }
+        }
+      },
+      { threshold: 0.15 },
+    );
+    targets.forEach((el) => {
+      el.classList.add("needs-reveal");
+      observer.observe(el);
+    });
+    return () => observer.disconnect();
+  }, []);
+
   return (
     <main className="min-h-dvh overflow-x-hidden bg-[#f7f7f6] text-neutral-950">
       <header className="mx-auto flex w-full max-w-[100vw] flex-col gap-4 px-4 py-6 sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:py-10 lg:max-w-6xl">
@@ -414,6 +438,11 @@ export default function LandingPage() {
           from { opacity: 0; transform: scale(0.7) rotate(-4deg); }
           to { opacity: 1; transform: scale(1) rotate(0deg); }
         }
+        /* IntersectionObserver fallback (Safari/Firefox): same keyframes, time-based */
+        .needs-reveal { opacity: 0; }
+        .needs-reveal.in-view.scroll-reveal { animation: revealUp 0.6s ease-out both; }
+        .needs-reveal.in-view.scroll-reveal-scale { animation: revealScale 0.7s ease-out both; }
+        .needs-reveal.in-view.compas-tile { animation: tilePop 0.5s ease-out both; animation-delay: calc(var(--stagger, 0) * 60ms); }
         .hero-badge-shimmer {
           background: linear-gradient(110deg, #635bff 20%, #b7b2ff 40%, #635bff 60%);
           background-size: 200% 100%;

@@ -21,6 +21,8 @@ test("landing adds a lower Compas collection layer without replacing the product
   assert.match(source, /\/compas\/compas-\$\{tokenId\}\.svg/);
   assert.match(source, /1516/);
   assert.match(source, /animation-timeline: view\(\)/);
+  assert.match(source, /IntersectionObserver/);
+  assert.match(source, /needs-reveal/);
   assert.match(source, /prefers-reduced-motion/);
   assert.match(source, /Robinhood is wired against the public sequencer RPC/);
   assert.match(source, /Recover funds panel scans every known temporary wallet/);
