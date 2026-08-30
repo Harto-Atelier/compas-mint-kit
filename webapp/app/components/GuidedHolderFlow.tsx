@@ -39,6 +39,7 @@ import {
   broadcastPreparedBrowserMint,
   broadcastSignedMintViaRpc,
   createSubmittedMintReceipt,
+  explorerTxUrl,
   invalidateBrowserMintTransactions,
   markGuidedMintReceiptsForReconciliation,
   markSignedMintBroadcastViaFastPath,
@@ -76,9 +77,32 @@ import {
   writeGuidedHolderRecoveryJournal,
   type GuidedHolderRecoveryJournal,
 } from "@/lib/guided-holder-recovery";
+import {
+  GUIDED_SESSION_STORAGE_KEY,
+  buildGuidedSessionSnapshot,
+  clearGuidedSessionSnapshot,
+  describeGuidedSessionResume,
+  mergeRestoredGuidedFundingSubmissions,
+  parseGuidedSessionSnapshot,
+  planGuidedFundingAutoVerification,
+  readGuidedSessionSnapshot,
+  resolveGuidedResumeStep,
+  writeGuidedSessionSnapshot,
+  type GuidedSessionSnapshot,
+} from "@/lib/guided-session-persistence";
 import type { MintDiscoveryError, MintDiscoveryResponse } from "@/lib/mint-types";
+import { confirmGuidedFinishResidualSafety } from "@/lib/guided-finish-safety";
+import RecoverFundsPanel from "@/app/components/RecoverFundsPanel";
 import type { OpenSeaDropCard as GuidedFeedDrop, OpenSeaDropsFeedResult } from "@/lib/opensea-drops-feed";
 import { createLaunchVaultGenerationGuard, subscribeToLaunchVaultLifecycle } from "@/lib/launch-vault-lifecycle";
+import {
+  buildVaultRecoveryFile,
+  confirmVaultRecoverySaved,
+  clearVaultRecoveryConfirmation,
+  isVaultRecoveryConfirmed,
+  serializeVaultRecoveryFile,
+  vaultRecoveryFileName,
+} from "@/lib/vault-recovery-file";
 import {
   blockscoutTxUrl,
   humanizeMintError,
@@ -118,6 +142,14 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
 
   const [vaultPassphrase, setVaultPassphrase] = useState("");
   const [unlockedVault, setUnlockedVault] = useState<LaunchVaultPayload | null>(null);
+  const [recoverySaved, setRecoverySaved] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return isVaultRecoveryConfirmed(window.localStorage);
+    } catch {
+      return false;
+    }
+  });
   const [burners, setBurners] = useState<LaunchVaultPublicWallet[]>([]);
   const [selectedBurnerAddresses, setSelectedBurnerAddresses] = useState<string[]>([]);
 
@@ -164,6 +196,18 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
     }
   });
   const [recoveryBalances, setRecoveryBalances] = useState<Record<string, bigint | null>>({});
+  const [sessionResume, setSessionResume] = useState<GuidedSessionSnapshot | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      return readGuidedSessionSnapshot(window.localStorage);
+    } catch {
+      return null;
+    }
+  });
+  const [resumeDismissed, setResumeDismissed] = useState(false);
+  const [autoVerifyTick, setAutoVerifyTick] = useState(0);
+  const autoVerifyAttemptAt = useRef<Record<string, number>>({});
+  const autoVerifyInFlight = useRef(false);
   const vaultGeneration = useRef(createLaunchVaultGenerationGuard());
   const relayHealth = useRelayHealth();
 
@@ -191,6 +235,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
     vaultGeneration.current.invalidate();
     setUnlockedVault(null);
     setVaultPassphrase("");
+    setRecoverySaved(isVaultRecoveryConfirmed(window.localStorage));
     setBurners([]);
     setSelectedBurnerAddresses([]);
     setTransactions((current) => {
@@ -220,16 +265,79 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
-      if (event.key !== GUIDED_HOLDER_RECOVERY_STORAGE_KEY) return;
-      try {
-        setRecoveryJournal(event.newValue ? parseGuidedHolderRecoveryJournal(event.newValue) : null);
-      } catch {
-        setError("A recovery journal from another tab failed validation and was ignored.");
+      if (event.key === GUIDED_HOLDER_RECOVERY_STORAGE_KEY) {
+        try {
+          setRecoveryJournal(event.newValue ? parseGuidedHolderRecoveryJournal(event.newValue) : null);
+        } catch {
+          setError("A recovery journal from another tab failed validation and was ignored.");
+        }
+        return;
+      }
+      if (event.key === GUIDED_SESSION_STORAGE_KEY) {
+        try {
+          setSessionResume(event.newValue ? parseGuidedSessionSnapshot(event.newValue) : null);
+        } catch {
+          setError("A guided session snapshot from another tab failed validation and was ignored.");
+        }
       }
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
+
+  // Persist the secret-free guided-run session snapshot (selected mint, current
+  // step, funding hashes, verification results) so a reload can offer resume.
+  // Writing starts only once a mint is selected so an empty fresh session never
+  // clobbers a previous run's snapshot before the user resumes or acts.
+  useEffect(() => {
+    if (finished) {
+      clearGuidedSessionSnapshot(window.localStorage);
+      return;
+    }
+    if (!discovery && Object.keys(submissions).length === 0) return;
+    try {
+      const snapshot = buildGuidedSessionSnapshot({
+        step,
+        drop: discovery
+          ? { query: query.trim() || discovery.collection.address, chainKey: chainKey === "ethereum" ? "ethereum" : "base", collectionAddress: discovery.collection.address, collectionName: discovery.collection.name }
+          : sessionResume?.drop ?? null,
+        fundingSubmissions: Object.values(submissions).map((row) => ({ transactionId: row.transactionId, hash: row.hash })),
+        fundingVerifications: verifications.map((row) => ({ transactionId: row.transactionId, hash: row.hash, verified: row.verified })),
+      });
+      writeGuidedSessionSnapshot(window.localStorage, snapshot);
+    } catch {
+      // A snapshot that fails secret-free validation is never persisted.
+    }
+    // The snapshot is derived state only; sessionResume is intentionally not a trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, discovery, query, chainKey, submissions, verifications, finished]);
+
+  // Funding auto-verification: after a funding tx is submitted, poll its
+  // receipt every ~5s until it verifies. Failed or malformed receipt reads stay
+  // unverified and retryable — they are never treated as confirmed. Because the
+  // submission hashes are persisted, this recovers after a browser restart once
+  // the funding plan is rebuilt.
+  useEffect(() => {
+    if (step !== "funding" || !fundingPlan || autoVerifyInFlight.current) return;
+    const plan = planGuidedFundingAutoVerification({
+      submissions: Object.values(submissions),
+      verifications,
+      lastAttemptAt: autoVerifyAttemptAt.current,
+      now: Date.now(),
+    });
+    if (plan.due.length > 0) {
+      const transactionId = plan.due[0];
+      autoVerifyAttemptAt.current[transactionId] = Date.now();
+      const timer = window.setTimeout(() => void autoVerifyFunding(transactionId), 0);
+      return () => window.clearTimeout(timer);
+    }
+    if (plan.nextDelayMs !== null) {
+      const timer = window.setTimeout(() => setAutoVerifyTick((tick) => tick + 1), plan.nextDelayMs);
+      return () => window.clearTimeout(timer);
+    }
+    // Auto-verification is read-only receipt polling; it never signs or sends.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, fundingPlan, submissions, verifications, autoVerifyTick]);
 
   const selectedBurners = useMemo(
     () => burners.filter((wallet) => selectedBurnerAddresses.some((address) => address.toLowerCase() === wallet.address.toLowerCase())),
@@ -389,12 +497,49 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
       setBurners(projected);
       setSelectedBurnerAddresses(selected.map((wallet) => wallet.address));
       setVaultPassphrase("");
+      setRecoverySaved(isVaultRecoveryConfirmed(window.localStorage));
       setNotice(`${projected.length} burner address${projected.length === 1 ? "" : "es"} loaded. Signers stay only in memory for this exact guided run and are never displayed.`);
       setStep("setup");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not read the encrypted launch Vault.");
     } finally {
       setBusy(null);
+    }
+  }
+
+  function downloadGuidedRecoveryFile() {
+    resetMessages();
+    try {
+      const raw = window.localStorage.getItem(LAUNCH_VAULT_STORAGE_KEY);
+      if (!raw) throw new Error("No encrypted launch Vault exists in this browser yet. Create burners first.");
+      const recoveryFile = buildVaultRecoveryFile(parseEncryptedLaunchVaultBackup(raw));
+      const blob = new Blob([serializeVaultRecoveryFile(recoveryFile)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = vaultRecoveryFileName(recoveryFile);
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setNotice(`Downloaded ${vaultRecoveryFileName(recoveryFile)}. Ciphertext only — no keys, no passphrase. Keep it safe, then confirm below.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not build the recovery file.");
+    }
+  }
+
+  function confirmGuidedRecoverySaved(checked: boolean) {
+    resetMessages();
+    try {
+      if (checked) {
+        confirmVaultRecoverySaved(window.localStorage);
+      } else {
+        clearVaultRecoveryConfirmation(window.localStorage);
+      }
+      setRecoverySaved(isVaultRecoveryConfirmed(window.localStorage));
+    } catch (err) {
+      setRecoverySaved(false);
+      setError(err instanceof Error ? err.message : "Could not record the recovery confirmation.");
     }
   }
 
@@ -459,6 +604,13 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
       setError("Verified holder, unlocked Vault, and drop scan are required before funding review.");
       return;
     }
+    // Hard gate: never move toward funding real burners while the encrypted
+    // Vault blob currently in this browser has no confirmed recovery file.
+    if (!isVaultRecoveryConfirmed(window.localStorage)) {
+      setRecoverySaved(false);
+      setError("Save your recovery file first. Download it in the wallets step and check “I saved my recovery file” before funding.");
+      return;
+    }
     clearBoundRun();
     const reviewGeneration = vaultGeneration.current.begin();
     setBusy("Binding funding, mint recipient, spend maximum, signers, and receipt reads…");
@@ -505,8 +657,13 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
       setExecutionPlan(preview.plan);
       setExecutionCapabilities(capabilities);
       setTransactions(preview.plan.transactions);
-      persistRecoveryEvidence({ plan: preview.plan, transactionRows: [], receiptRows: [], fundingRows: [] });
-      setNotice("Exact funding and live mint rows are bound to the same in-memory signers. Nothing was sent.");
+      const restoredSubmissions = sessionResume ? mergeRestoredGuidedFundingSubmissions(funding, sessionResume.fundingSubmissions, {}) : {};
+      setSubmissions(restoredSubmissions);
+      setAutoVerifyTick((tick) => tick + 1);
+      persistRecoveryEvidence({ plan: preview.plan, transactionRows: [], receiptRows: [], fundingRows: Object.values(restoredSubmissions) });
+      setNotice(Object.keys(restoredSubmissions).length > 0
+        ? "Exact funding and live mint rows are rebound. Persisted funding hashes were restored and receipt auto-verification will retry every ~5s."
+        : "Exact funding and live mint rows are bound to the same in-memory signers. Nothing was sent.");
       setStep("funding");
     } catch (err) {
       if (vaultGeneration.current.isCurrent(reviewGeneration)) setError(err instanceof Error ? err.message : "Could not build a complete funding-to-receipt run.");
@@ -569,6 +726,57 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
     } finally {
       if (vaultGeneration.current.isCurrent(fundingGeneration)) setBusy(null);
     }
+  }
+
+  /**
+   * Background variant of verifyFunding for the ~5s auto-poll. It runs the
+   * exact same read-only receipt verification but never spams the error banner:
+   * a pending, malformed, or failed receipt read simply records an unverified
+   * result (or nothing) and stays retryable on the next interval. Nothing is
+   * ever marked verified without a fully matching successful receipt.
+   */
+  async function autoVerifyFunding(transactionId: string) {
+    if (autoVerifyInFlight.current || !fundingPlan || !submissions[transactionId]) return;
+    if (verifications.some((row) => row.transactionId === transactionId && row.verified)) return;
+    autoVerifyInFlight.current = true;
+    const verificationGeneration = vaultGeneration.current.begin();
+    try {
+      const verification = await verifyConnectedHolderFundingTransaction({
+        provider: getBrowserProvider(),
+        plan: fundingPlan,
+        submission: submissions[transactionId],
+      });
+      if (!vaultGeneration.current.isCurrent(verificationGeneration)) return;
+      setVerifications((current) => [...current.filter((row) => row.transactionId !== transactionId), verification]);
+      if (verification.verified) setNotice(`${transactionId} verified automatically. The next transfer may now be reviewed explicitly.`);
+    } catch {
+      // Receipt still pending or the read failed; the poll retries on the next interval.
+    } finally {
+      autoVerifyInFlight.current = false;
+      if (vaultGeneration.current.isCurrent(verificationGeneration)) setAutoVerifyTick((tick) => tick + 1);
+    }
+  }
+
+  function resumeGuidedSession() {
+    resetMessages();
+    if (!sessionResume) return;
+    setResumeDismissed(true);
+    if (sessionResume.drop) {
+      setQuery(sessionResume.drop.query);
+      setChainKey(sessionResume.drop.chainKey);
+    }
+    const target = resolveGuidedResumeStep(sessionResume.step, recommendedStep);
+    setStep(target);
+    const { mintName, stepLabel } = describeGuidedSessionResume(sessionResume);
+    setNotice(target === sessionResume.step
+      ? `Resumed your mint run for ${mintName} at the ${stepLabel} step.`
+      : `Resuming your mint run for ${mintName}. You were at ${stepLabel}; signers live only in memory, so redo the earlier steps to get back there — persisted funding hashes are restored automatically after funding review.`);
+  }
+
+  function dismissGuidedSessionResume() {
+    setResumeDismissed(true);
+    clearGuidedSessionSnapshot(window.localStorage);
+    setSessionResume(null);
   }
 
   async function verifyFunding(transactionId: string) {
@@ -922,16 +1130,43 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
     }
   }
 
-  function finishSafely() {
+  async function finishSafely() {
     resetMessages();
     if (!finishAssessment?.ready) {
       setError("Finish is blocked until every mint is confirmed to the holder and every burner balance is verified at zero.");
       return;
     }
-    revokePreparedBrowserMintSigners(transactions);
-    setUnlockedVault(null);
-    setFinished(true);
-    setNotice("Finished safely. In-memory signer authority was dropped. The encrypted Vault backup and verified receipts were not wiped.");
+    if (!holder || !executionPlan || expectedTransactionCount === null) {
+      setError("Finish is blocked: the bound run context is incomplete.");
+      return;
+    }
+    // Anti-loss sanity check: never trust stale UI balances. Re-read every
+    // burner used in this run onchain immediately before completing finish.
+    setBusy("Final anti-loss check: re-reading every burner balance onchain…");
+    try {
+      const safety = await confirmGuidedFinishResidualSafety({
+        holderAddress: holder.address,
+        expectedTransactionCount,
+        plan: executionPlan,
+        transactions,
+        receipts,
+        provider: undefined,
+      });
+      setBurnerBalances(safety.balances);
+      if (!safety.safe) {
+        const detail = safety.rpcError ?? safety.assessment.blockers[0] ?? "residual or unknown burner balances remain";
+        setError(`Finish blocked by the final onchain check: ${detail} Recover the funds through the recovery journal and the Vault manual exact sweep before finishing. Nothing is swept automatically.`);
+        return;
+      }
+      revokePreparedBrowserMintSigners(transactions);
+      setUnlockedVault(null);
+      setFinished(true);
+      setNotice("Finished safely after a fresh onchain zero-balance check on every burner. In-memory signer authority was dropped. The encrypted Vault backup and verified receipts were not wiped.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "The final anti-loss balance check failed; finish stays blocked.");
+    } finally {
+      setBusy(null);
+    }
   }
 
   const networkGasMaxWei = fundingPlan ? fundingPlan.totals.mintGasWei + fundingPlan.totals.sourceTransferGasWei : BigInt(0);
@@ -939,6 +1174,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
     (total, transaction) => total + (transaction.request.gasLimit ?? BigInt(0)) * (transaction.request.maxFeePerGas ?? BigInt(0)),
     BigInt(0),
   ) ?? BigInt(0);
+  const resumeDetails = sessionResume && !resumeDismissed ? describeGuidedSessionResume(sessionResume) : null;
 
   return (
     <section className={`${embedded ? "" : "min-h-screen bg-[var(--compas-bg-art)] p-4 sm:p-6"} text-[color:var(--compas-ink)]`}>
@@ -989,6 +1225,29 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
         {error ? <p className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">{error}</p> : null}
         {busy ? <p className="rounded-2xl border border-violet-200 bg-violet-50 p-3 text-sm font-black text-violet-700">{busy}</p> : null}
 
+        {resumeDetails ? (
+          <div className="rounded-2xl border-2 border-[color:var(--compas-accent)] bg-[color:var(--compas-card)] p-4" aria-live="polite">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-[color:var(--compas-accent)]">Resume your mint</p>
+                <p className="mt-1 text-lg font-black">Resume your mint: {resumeDetails.mintName} — you were at {resumeDetails.stepLabel}</p>
+                <p className="mt-1 text-xs font-bold text-[color:var(--compas-muted)]">Only public session state was saved. Vault signers remain memory-only; funding hashes resume read-only verification after funding review.</p>
+              </div>
+              <div className="grid gap-2 sm:min-w-44">
+                <button type="button" onClick={resumeGuidedSession} className="rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)]">Resume</button>
+                <button type="button" onClick={dismissGuidedSessionResume} className="rounded-2xl border border-[color:var(--compas-line)] px-5 py-2 text-xs font-black text-[color:var(--compas-muted)]">Dismiss</button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        <RecoverFundsPanel
+          holderAddress={holder?.address ?? null}
+          vaultWallets={burners}
+          journal={recoveryJournal}
+          onOpenVault={() => openAdvanced("Vault")}
+        />
+
         {recoveryJournal ? (
           <details className="rounded-2xl border-2 border-amber-300 bg-amber-50 p-4 text-amber-950">
             <summary className="cursor-pointer text-sm font-black">Browser recovery journal · {recoveryJournal.collection.name}</summary>
@@ -1036,6 +1295,17 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
                 <input type="password" value={vaultPassphrase} onChange={(event) => setVaultPassphrase(event.target.value)} placeholder="Backup passphrase" autoComplete="current-password" className={FIELD} />
                 <button type="submit" disabled={Boolean(busy)} className="rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:opacity-50">Load wallets for this mint</button>
               </form>
+            </div>
+            <div className={`mt-4 rounded-2xl border p-4 ${recoverySaved ? "border-emerald-300 bg-emerald-50/60" : "border-amber-300 bg-amber-50/60"}`}>
+              <p className="text-xs font-black uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">Recovery file</p>
+              <p className="mt-2 text-sm font-bold text-[color:var(--compas-muted)]">Download one encrypted file that can restore these wallets. No keys, no passphrase inside. You cannot fund wallets until you confirm you saved it.</p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-[auto_1fr] sm:items-center">
+                <button type="button" onClick={downloadGuidedRecoveryFile} className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-card)] px-5 py-3 text-sm font-black">Download recovery file</button>
+                <label className="flex items-center gap-3 text-sm font-bold">
+                  <input type="checkbox" checked={recoverySaved} onChange={(event) => confirmGuidedRecoverySaved(event.target.checked)} />
+                  I saved my recovery file
+                </label>
+              </div>
             </div>
             {burners.length > 0 ? <div className="mt-4 grid gap-2 sm:grid-cols-2">{burners.map((wallet) => <label key={wallet.id} className="flex items-center gap-3 rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-3 text-sm font-bold"><input type="checkbox" checked={selectedBurnerAddresses.includes(wallet.address)} onChange={() => toggleBurner(wallet.address)} /><span className="min-w-0"><span className="block font-black">{wallet.label}</span><span className="block truncate font-mono text-xs text-[color:var(--compas-muted)]">{maskVaultAddress(wallet.address)} · {wallet.chain}</span></span></label>)}</div> : null}
           </div>
@@ -1112,7 +1382,8 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
                 <p className="mt-2 text-sm font-bold text-[color:var(--compas-muted)]">Real mint can spend funds. You sign before anything is sent.</p>
               </div>
             </div>
-            <button type="button" onClick={() => void reviewFunding()} disabled={Boolean(busy)} className="mt-4 w-full rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:opacity-50">Continue</button>
+            {!recoverySaved ? <p className="mt-4 rounded-2xl border border-amber-300 bg-amber-50/60 p-3 text-xs font-bold text-amber-800">Funding is locked until you save your recovery file: go back to Prepare wallets, download it, and check “I saved my recovery file”.</p> : null}
+            <button type="button" onClick={() => void reviewFunding()} disabled={Boolean(busy) || !recoverySaved} className="mt-4 w-full rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:opacity-50">Continue</button>
           </div>
         ) : null}
 
@@ -1131,7 +1402,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
               const submission = submissions[row.id];
               const verification = verifications.find((item) => item.transactionId === row.id);
               const previousReady = fundingPlan.transactions.slice(0, row.index).every((previous) => verifications.some((item) => item.transactionId === previous.id && item.verified));
-              return <article key={row.id} className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-4"><div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-black">Transfer {row.index + 1} · {maskVaultAddress(row.to)}</p><p className="mt-1 font-mono text-xs text-[color:var(--compas-muted)]">{formatEther(row.fundingValueWei)} ETH to burner; source transfer gas separate</p></div><span className="text-xs font-black uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">{verification?.verified ? "verified" : submission ? "receipt pending" : "not sent"}</span></div>{!submission ? <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]"><label className="flex items-start gap-2 rounded-2xl bg-[color:var(--compas-card)] p-3 text-xs font-bold"><input type="checkbox" checked={Boolean(fundingConsent[row.id])} onChange={(event) => setFundingConsent((current) => ({ ...current, [row.id]: event.target.checked }))} /><span>I reviewed this burner and exact value. Ask my holder wallet to confirm this transfer only.</span></label><button type="button" onClick={() => void submitFunding(row.id)} disabled={!preflight?.ready || !previousReady || !fundingConsent[row.id] || !executionCapabilities?.ready || Boolean(busy)} className="rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:cursor-not-allowed disabled:opacity-40">Confirm transfer {row.index + 1}</button></div> : !verification?.verified ? <button type="button" onClick={() => void verifyFunding(row.id)} disabled={Boolean(busy)} className="mt-3 rounded-2xl border border-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent)]">Verify receipt & balance</button> : null}</article>;
+              return <article key={row.id} className="rounded-2xl border border-[color:var(--compas-line)] bg-[color:var(--compas-soft)] p-4"><div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-black">Transfer {row.index + 1} · {maskVaultAddress(row.to)}</p><p className="mt-1 font-mono text-xs text-[color:var(--compas-muted)]">{formatEther(row.fundingValueWei)} ETH to burner; source transfer gas separate</p></div><span className="text-xs font-black uppercase tracking-[0.14em] text-[color:var(--compas-muted)]">{verification?.verified ? "verified" : submission ? "auto-checking receipt" : "not sent"}</span></div>{submission ? <a href={explorerTxUrl(fundingPlan.chain.key, submission.hash)} target="_blank" rel="noreferrer" className="mt-3 block break-all rounded-xl border border-[color:var(--compas-line)] bg-[color:var(--compas-card)] px-3 py-2 font-mono text-xs font-black text-[color:var(--compas-accent)]">Funding tx · explorer · {submission.hash}</a> : null}{submission && !verification?.verified ? <p className="mt-2 text-xs font-bold text-[color:var(--compas-muted)]">Auto-verifying every ~5s. Unknown, pending, or malformed receipts stay retryable and never unlock the next transfer.</p> : null}{!submission ? <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]"><label className="flex items-start gap-2 rounded-2xl bg-[color:var(--compas-card)] p-3 text-xs font-bold"><input type="checkbox" checked={Boolean(fundingConsent[row.id])} onChange={(event) => setFundingConsent((current) => ({ ...current, [row.id]: event.target.checked }))} /><span>I reviewed this burner and exact value. Ask my holder wallet to confirm this transfer only.</span></label><button type="button" onClick={() => void submitFunding(row.id)} disabled={!preflight?.ready || !previousReady || !fundingConsent[row.id] || !executionCapabilities?.ready || Boolean(busy)} className="rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:cursor-not-allowed disabled:opacity-40">Confirm transfer {row.index + 1}</button></div> : !verification?.verified ? <button type="button" onClick={() => void verifyFunding(row.id)} disabled={Boolean(busy)} className="mt-3 rounded-2xl border border-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent)]">Verify receipt & balance now</button> : null}</article>;
             })}</div>
             {fundingComplete ? <button type="button" onClick={() => setStep("simulate")} className="mt-4 w-full rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)]">Continue to exact simulation</button> : null}
           </div>
@@ -1174,7 +1445,7 @@ export default function GuidedHolderFlow({ embedded = false, onOpenAdvanced }: G
                 <button type="button" onClick={() => void checkBurnerBalances()} disabled={!executionPlan || Boolean(busy)} className="mt-4 w-full rounded-2xl border border-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent)] disabled:opacity-40">Check burner balances</button>
                 <div className="mt-4 grid gap-2">{finishAssessment?.blockers.length ? finishAssessment.blockers.map((blocker) => <p key={blocker} className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">Blocked · {blocker}</p>) : <p className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-800">Receipts and balances pass the safe finish gate.</p>}</div>
                 {finishAssessment?.recovery.required ? <div className="mt-4 rounded-2xl border-2 border-amber-300 bg-amber-50 p-4 text-amber-900"><p className="text-xs font-black uppercase tracking-[0.16em]">Manual exact sweep</p><p className="mt-2 text-sm font-bold">Recipient: verified holder {maskVaultAddress(finishAssessment.recovery.recipient)}</p><p className="mt-2 text-sm font-semibold">{finishAssessment.recovery.instruction}</p><div className="mt-3 grid gap-2">{finishAssessment.recovery.burners.map((burner) => <p key={burner.address} className="rounded-xl bg-white p-2 font-mono text-xs font-bold">{maskVaultAddress(burner.address)} · {burner.status}{burner.balanceWei !== null ? ` · ${formatEther(burner.balanceWei)} ETH` : ""}</p>)}</div><button type="button" onClick={() => openAdvanced("Vault")} className="mt-4 w-full rounded-2xl bg-amber-700 px-5 py-3 text-sm font-black text-white">Open encrypted Vault for manual recovery</button><p className="mt-2 text-xs font-bold">Nothing is sent here. Each burner requires an exact balance/nonce/gas/fee/value review, simulation, separate consent, receipt verification, and residual balance check; rotation stays blocked.</p></div> : null}
-                <button type="button" onClick={finishSafely} disabled={!finishAssessment?.ready || Boolean(busy)} className="mt-4 w-full rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:cursor-not-allowed disabled:opacity-40">Finish safely</button>
+                <button type="button" onClick={() => void finishSafely()} disabled={!finishAssessment?.ready || Boolean(busy)} className="mt-4 w-full rounded-2xl bg-[color:var(--compas-accent)] px-5 py-3 text-sm font-black text-[color:var(--compas-accent-ink)] disabled:cursor-not-allowed disabled:opacity-40">Finish safely</button>
               </>
             )}
           </div>

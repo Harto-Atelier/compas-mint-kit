@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
-import { BurnerGenerationPanel, ImportWalletPanel, RestoreBackupPanel } from "../app/LaunchVaultConsole";
+import { BurnerGenerationPanel, ImportWalletPanel, RecoveryFilePanel, RestoreBackupPanel } from "../app/LaunchVaultConsole";
 import {
   MAX_LAUNCH_VAULT_BACKUP_BYTES,
   assertLaunchVaultBackupFileSize,
@@ -102,9 +102,9 @@ test("restore first requires local candidate authentication and does not show re
   const markup = renderToStaticMarkup(restorePanel());
 
   assert.match(markup, /^<details/);
-  assert.match(markup, /Advanced · restore encrypted backup/);
+  assert.match(markup, /Restore from file/);
   assert.match(markup, /type="file"/);
-  assert.match(markup, /accept="application\/json,.json"/);
+  assert.match(markup, /accept="application\/json,.json,.compas-vault"/);
   assert.match(markup, /Encrypted backup JSON/);
   assert.match(markup, /Candidate passphrase/);
   assert.match(markup, /Authenticate backup locally/);
@@ -182,4 +182,28 @@ test("Vault console uses canonical lifecycle writes and generation cancellation 
   assert.match(consoleSource, /restoreFileGeneration/);
   assert.match(consoleSource, /restoreAuthGeneration/);
   assert.doesNotMatch(consoleSource, /window\.localStorage\.(?:setItem|removeItem)\(LAUNCH_VAULT_STORAGE_KEY/);
+});
+
+test("Recovery file panel renders download button and persistent saved-file confirmation", () => {
+  const markup = renderToStaticMarkup(
+    RecoveryFilePanel({ confirmed: false, hasVault: true, onConfirm: noop, onDownload: noop }),
+  );
+
+  assert.match(markup, /Download recovery file/);
+  assert.match(markup, /\.compas-vault/);
+  assert.match(markup, /I saved my recovery file/);
+  assert.match(markup, /type="checkbox"/);
+  assert.doesNotMatch(markup, /Private key/);
+});
+
+test("Recovery file panel disables actions without a vault and reflects the confirmed flag", () => {
+  const emptyMarkup = renderToStaticMarkup(
+    RecoveryFilePanel({ confirmed: false, hasVault: false, onConfirm: noop, onDownload: noop }),
+  );
+  assert.match(emptyMarkup, /disabled=""/);
+
+  const confirmedMarkup = renderToStaticMarkup(
+    RecoveryFilePanel({ confirmed: true, hasVault: true, onConfirm: noop, onDownload: noop }),
+  );
+  assert.match(confirmedMarkup, /checked=""/);
 });

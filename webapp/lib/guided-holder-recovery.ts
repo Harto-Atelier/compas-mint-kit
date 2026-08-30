@@ -296,7 +296,7 @@ function parseReceipt(value: unknown, planBinding: string): GuidedMintReceipt {
   };
 }
 
-function assertNoForbiddenKeys(value: unknown): void {
+export function assertNoForbiddenKeys(value: unknown): void {
   if (Array.isArray(value)) {
     for (const item of value) assertNoForbiddenKeys(item);
     return;
@@ -328,7 +328,7 @@ function requirePublicString(value: unknown, label: string, max: number): string
   if (containsSecretShapedValue(text)) throw new Error(`${label} contains a secret-shaped value.`);
   return text;
 }
-function containsSecretShapedValue(value: string): boolean {
+export function containsSecretShapedValue(value: string): boolean {
   return /(?:^|[^0-9a-fA-F])0x[0-9a-fA-F]{64}(?:$|[^0-9a-fA-F])/.test(value) || /(?:^|[^0-9a-fA-F])[0-9a-fA-F]{64}(?:$|[^0-9a-fA-F])/.test(value);
 }
 function requireArray(value: unknown, label: string): unknown[] { if (!Array.isArray(value) || value.length > 1_000) throw new Error(`${label} must be a bounded array.`); return value; }

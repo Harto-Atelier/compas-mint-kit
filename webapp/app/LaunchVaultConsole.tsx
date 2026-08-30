@@ -43,6 +43,15 @@ import {
   writeLaunchVaultStorage,
   type LaunchVaultLifecycleAction,
 } from "@/lib/launch-vault-lifecycle";
+import {
+  VAULT_RECOVERY_FILE_EXTENSION,
+  buildVaultRecoveryFile,
+  clearVaultRecoveryConfirmation,
+  confirmVaultRecoverySaved,
+  isVaultRecoveryConfirmed,
+  serializeVaultRecoveryFile,
+  vaultRecoveryFileName,
+} from "@/lib/vault-recovery-file";
 
 const FIELD =
   "h-12 rounded-2xl border border-violet-100 bg-white/90 px-4 text-sm font-bold text-slate-950 outline-none shadow-sm transition placeholder:text-slate-400 focus:border-violet-300 focus:ring-4 focus:ring-violet-100";
@@ -86,6 +95,7 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
   const [sealPassphrase, setSealPassphrase] = useState("");
 
   const [wipePhrase, setWipePhrase] = useState("");
+  const [recoveryConfirmed, setRecoveryConfirmed] = useState(false);
   const lifecycleSourceId = useRef(`launch-vault-console-${Math.random().toString(36).slice(2)}`);
   const vaultGeneration = useRef(createLaunchVaultGenerationGuard());
 
@@ -94,6 +104,7 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
     try {
       const raw = window.localStorage.getItem(LAUNCH_VAULT_STORAGE_KEY);
       setStorageOccupied(raw !== null);
+      setRecoveryConfirmed(isVaultRecoveryConfirmed(window.localStorage));
       if (!raw) return;
       setEncryptedBackup(parseEncryptedLaunchVaultBackup(raw));
     } catch (err) {
@@ -113,6 +124,7 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
       setReplaceConfirmation("");
       setEncryptedBackup(change.newValue ? parseStoredBackupSafely(change.newValue) : null);
       setStorageOccupied(change.newValue !== null);
+      setRecoveryConfirmed(isVaultRecoveryConfirmed(window.localStorage));
       setNotice("The encrypted browser Vault changed in another context. Decrypted state and pending actions were invalidated.");
     }, { ignoreSourceId: lifecycleSourceId.current });
   }, []);
@@ -323,6 +335,36 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
     setNotice(`Downloaded ${filename}. It contains ciphertext only; keep the passphrase separately.`);
   }
 
+  function handleDownloadRecoveryFile() {
+    resetMessages();
+    if (!encryptedBackup) {
+      setError("Create a vault before downloading a recovery file.");
+      return;
+    }
+    try {
+      const recoveryFile = buildVaultRecoveryFile(encryptedBackup);
+      downloadTextFile(vaultRecoveryFileName(recoveryFile), serializeVaultRecoveryFile(recoveryFile));
+      setNotice(`Downloaded ${vaultRecoveryFileName(recoveryFile)}. It contains ciphertext only — no keys, no passphrase. Keep it with your passphrase stored separately, then confirm below.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not build the recovery file.");
+    }
+  }
+
+  function handleConfirmRecoverySaved(checked: boolean) {
+    resetMessages();
+    try {
+      if (checked) {
+        confirmVaultRecoverySaved(window.localStorage);
+      } else {
+        clearVaultRecoveryConfirmation(window.localStorage);
+      }
+      setRecoveryConfirmed(isVaultRecoveryConfirmed(window.localStorage));
+    } catch (err) {
+      setRecoveryConfirmed(false);
+      setError(err instanceof Error ? err.message : "Could not record the recovery confirmation.");
+    }
+  }
+
   async function handleRestoreFile(file: File | null) {
     const restoreFileGeneration = vaultGeneration.current.invalidate();
     resetMessages();
@@ -399,6 +441,7 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
       });
       setEncryptedBackup(restoredBackup);
       setStorageOccupied(true);
+      setRecoveryConfirmed(isVaultRecoveryConfirmed(window.localStorage));
       setVault(null);
       setCreatePassphrase("");
       setCreateConfirm("");
@@ -427,6 +470,8 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
       sourceId: lifecycleSourceId.current,
       action: "wipe",
     });
+    clearVaultRecoveryConfirmation(window.localStorage);
+    setRecoveryConfirmed(false);
     setEncryptedBackup(null);
     setStorageOccupied(false);
     setVault(null);
@@ -460,6 +505,9 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
     });
     setStorageOccupied(true);
     setEncryptedBackup(backup);
+    // A fresh seal means a fresh blob: the previous recovery file no longer
+    // matches, so the saved-recovery confirmation must be re-earned.
+    setRecoveryConfirmed(isVaultRecoveryConfirmed(window.localStorage));
   }
 
   function resetMessages() {
@@ -527,6 +575,13 @@ export default function LaunchVaultConsole({ embedded = false }: { embedded?: bo
             ) : (
               <UnlockVaultPanel unlockPassphrase={unlockPassphrase} onPassphrase={setUnlockPassphrase} onSubmit={handleUnlock} onExport={handleExportBackup} />
             )}
+
+            <RecoveryFilePanel
+              confirmed={recoveryConfirmed}
+              hasVault={Boolean(encryptedBackup)}
+              onConfirm={handleConfirmRecoverySaved}
+              onDownload={handleDownloadRecoveryFile}
+            />
 
             <RestoreBackupPanel
               authenticatedRestore={authenticatedRestore}
@@ -808,9 +863,9 @@ export function RestoreBackupPanel({
   return (
     <details className={CARD}>
       <summary className="cursor-pointer list-none text-sm font-black text-violet-700">
-        Advanced · restore encrypted backup
+        Restore from file
         <span className="mt-1 block text-xs font-semibold leading-5 text-slate-500">
-          Authenticate, inspect, then transactionally commit a ciphertext-only Compas Vault backup.
+          Load a {VAULT_RECOVERY_FILE_EXTENSION} recovery file or ciphertext-only backup JSON, authenticate it locally, then commit it transactionally.
         </span>
       </summary>
       {!authenticatedRestore ? (
@@ -824,7 +879,7 @@ export function RestoreBackupPanel({
             <input
               key={fileInputKey}
               type="file"
-              accept="application/json,.json"
+              accept={`application/json,.json,${VAULT_RECOVERY_FILE_EXTENSION}`}
               onChange={(event) => onFile(event.target.files?.[0] ?? null)}
               className="block w-full rounded-2xl border border-violet-100 bg-white/90 px-4 py-3 text-sm font-bold normal-case tracking-normal text-slate-700 file:mr-4 file:rounded-xl file:border-0 file:bg-violet-100 file:px-4 file:py-2 file:font-black file:text-violet-700"
             />
@@ -1078,6 +1133,53 @@ export function ImportWalletPanel({
       </button>
       </form>
     </details>
+  );
+}
+
+export function RecoveryFilePanel({
+  confirmed,
+  hasVault,
+  onConfirm,
+  onDownload,
+}: {
+  confirmed: boolean;
+  hasVault: boolean;
+  onConfirm: (checked: boolean) => void;
+  onDownload: () => void;
+}) {
+  return (
+    <section className={CARD}>
+      <p className="text-xs font-black uppercase tracking-[0.24em] text-violet-600">Recovery file</p>
+      <h2 className="mt-2 text-2xl font-black text-slate-950">Save one file that can restore this Vault.</h2>
+      <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">
+        The <code className="font-mono">{VAULT_RECOVERY_FILE_EXTENSION}</code> file holds the same encrypted blob stored in this browser — ciphertext only, no keys, no passphrase. If this browser is wiped, restore from this file plus your passphrase.
+      </p>
+
+      <button
+        type="button"
+        onClick={onDownload}
+        disabled={!hasVault}
+        className="mt-4 h-12 w-full rounded-2xl bg-violet-600 px-5 font-black text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        Download recovery file
+      </button>
+
+      <label className={`mt-4 flex items-start gap-3 rounded-2xl border p-4 text-sm font-semibold leading-6 ${confirmed ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+        <input
+          type="checkbox"
+          checked={confirmed}
+          disabled={!hasVault}
+          onChange={(event) => onConfirm(event.target.checked)}
+          className="mt-1 h-4 w-4 accent-violet-600"
+        />
+        <span>
+          I saved my recovery file
+          <span className="mt-1 block text-xs font-semibold">
+            Funding stays blocked until you confirm. Any re-seal creates a new blob, so download and confirm again after changes.
+          </span>
+        </span>
+      </label>
+    </section>
   );
 }
 

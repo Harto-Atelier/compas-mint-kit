@@ -9,6 +9,7 @@ import {
   type LaunchVaultPayload,
 } from "./encrypted-launch-vault";
 import { writeLaunchVaultStorage, type LaunchVaultStorage } from "./launch-vault-lifecycle";
+import { parseVaultRecoveryFileOrNull } from "./vault-recovery-file";
 
 export const MAX_LAUNCH_VAULT_BACKUP_BYTES = 1024 * 1024;
 
@@ -42,7 +43,11 @@ export function assertLaunchVaultBackupFileSize(size: number): void {
 
 export function parseLaunchVaultBackupRestore(raw: string): EncryptedLaunchVaultBackup {
   assertLaunchVaultBackupFileSize(new TextEncoder().encode(raw).byteLength);
-  const parsed = parseEncryptedLaunchVaultBackup(raw);
+  // A `.compas-vault` recovery file wraps the same encrypted envelope with
+  // format/vaultId/createdAt metadata. Unwrap it here so both restore inputs
+  // flow through the identical canonical envelope path.
+  const recoveryFile = parseVaultRecoveryFileOrNull(raw);
+  const parsed = recoveryFile ? recoveryFile.vault : parseEncryptedLaunchVaultBackup(raw);
 
   return {
     kind: parsed.kind,
